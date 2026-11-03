@@ -25,6 +25,7 @@ from app.ingest.catalog import SOURCES
 from app.ingest.mapping import MappingSpec, header_fingerprint
 
 MAX_REPAIRS = 2
+MAPPING_ANSWER_TOKENS = 2500   # a mapping is a few hundred tokens; do not reserve more
 
 SYSTEM = """You map a business partner's spreadsheet export onto a fixed schema so a
 reconciliation tool can import it. You are given a profile of the file (column names exactly as
@@ -188,7 +189,7 @@ def _ask_model(llm: LLMClient, profile: FileProfile, hint: Hint, draft: Draft, c
     tokens = 0
     for round_no in range(MAX_REPAIRS + 1):
         try:
-            result = llm.complete_json(SYSTEM, prompt)
+            result = llm.complete_json(SYSTEM, prompt, max_tokens=MAPPING_ANSWER_TOKENS)
         except LLMBadOutput as exc:
             attempts.append(f"model round {round_no + 1}: unusable reply ({exc})")
             prompt += f"\n\nYour previous reply was unusable: {exc}. Reply with one JSON object."

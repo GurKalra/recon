@@ -3,9 +3,10 @@
     python -m app.demo load ../sample_data/small            # seed + import all 12 files
     python -m app.demo load ../sample_data/xl --reset       # wipe first (benchmark runs)
     python -m app.demo reset                                # wipe all imported data
-    python -m app.demo recon --as-of 2026-11-12             # runs the rule engine
+    python -m app.demo recon --as-of 2026-11-02             # runs the rule engine
     python -m app.demo review                               # build the review queue
     python -m app.demo review --ai                          # ... and ask the model too
+    python -m app.demo claims --as-of 2026-11-02            # money on the claim clock 
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import psycopg
 from psycopg import Connection
 from psycopg.rows import dict_row
 
+from app import claims
 from app.config import get_settings
 from app.ingest.catalog import LOAD_ORDER
 from app.ingest.pipeline import import_file
@@ -126,6 +128,8 @@ def main() -> int:
     review_p.add_argument("--limit", type=int, default=50, help="with --ai: how many payments")
     review_p.add_argument("--truth", type=Path, default=None,
                           help="with --ai: truth.csv of a generated data set, to score the picks")
+    claims_p = sub.add_parser("claims", help="show open money by partner and claim deadline")
+    claims_p.add_argument("--as-of", type=date.fromisoformat, default=None)
     recon_p = sub.add_parser("recon", help="run the reconciliation rules engine")
     recon_p.add_argument("--as-of", type=date.fromisoformat, default=None,
                          help="judge overdue-ness as of this date (default: today)")
@@ -146,6 +150,15 @@ def main() -> int:
                          if best else "no candidate")
                 print(f"  {grp['partner_code']:<4}{grp['occurred_on']}  "
                       f"₹{(grp['sale_paise'] or 0) / 100:>10,.2f}  -> {label}")
+            return 0
+        
+        if args.cmd == "claims":
+            when = args.as_of or date.today()
+            print(f"open money that can still be claimed, as of {when}")
+            for row in claims.deadline_summary(conn, when):
+                print(f"  {row['partner_code']:<5}{row['urgency']:<9}{row['findings']:>6} orders"
+                      f"  ₹{row['amount_paise'] / 100:>12,.2f}  nearest deadline "
+                      f"{row['nearest_deadline']}")
             return 0
         
         if args.cmd == "recon":

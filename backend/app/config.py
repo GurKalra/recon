@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     groq_reasoning_effort: str = "low"   # none | low | medium | high
     groq_temperature: float = 0.3        # Qwen advises against 0 for reasoning models
     groq_max_tokens: int = 4000          # thinking tokens count towards this
+    # Tokens per minute the client may spend (the provider counts the reserved answer too).
+    groq_tpm_limit: int = 7000
     groq_base_url: str = "https://api.groq.com/openai/v1"
     llm_timeout_s: float = 30.0
 

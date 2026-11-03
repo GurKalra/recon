@@ -42,6 +42,13 @@ Rules:
 - Use only what is written below. Do not invent facts."""
 
 
+# the rules' reasons that carry real evidence (the others just repeat numbers sent anyway)
+_EVIDENCE_PREFIXES = ("The remarks", "Same ", "Different ", "Another payment")
+
+# a simple decision: a short answer and no thinking keeps each call cheap
+ANSWER_TOKENS = 400
+
+
 @dataclass
 class RerankStats:
     asked: int = 0
@@ -84,7 +91,7 @@ def _history(conn: Connection, partner_id: int, limit: int = 12) -> str:
 
 def _payment_block(conn: Connection, group: dict) -> dict:
     lines = conn.execute(
-        """SELECT l.line_type, l.amount_paise, l.extras FROM match_groups g
+        """SELECT l.extras FROM match_groups g
            JOIN ledger_lines l ON l.id = ANY(g.line_ids) WHERE g.id = %s AND l.dup_seq = 0
            ORDER BY l.id""", (group["id"],)).fetchall()
     extras: dict[str, str] = {}
@@ -92,9 +99,7 @@ def _payment_block(conn: Connection, group: dict) -> dict:
         for k, v in (line["extras"] or {}).items():
             extras.setdefault(k, mask_text(str(v)))
     return {"partner": group["partner_name"], "paid_on": group["occurred_on"].isoformat(),
-            "reference": group["reference"],
-            "amount_of_the_sale": group["sale_paise"] / 100 if group["sale_paise"] else None,
-            "lines": [{"type": r["line_type"], "amount": r["amount_paise"] / 100} for r in lines],
+            "sale_amount": group["sale_paise"] / 100 if group["sale_paise"] else None,
             "partner_columns": extras}
 
 
@@ -102,16 +107,17 @@ def build_prompt(conn: Connection, group: dict, candidates: list[dict]) -> str:
     cand_rows = []
     for i, s in enumerate(candidates, start=1):
         feats = s["features"]
+        evidence = [r for r in s["reasons"] if r.startswith(_EVIDENCE_PREFIXES)]
         cand_rows.append({
-            "number": i, "order": s["order_ref_raw"], "ordered_on": s["ordered_on"].isoformat(),
-            "expected_payout_on": feats.get("due_on"), "days_from_expected": feats.get("days_off"),
-            "fee_lines_agreeing": (f"{feats.get('fee_lines_ok')} of "
+            "n": i, "order": s["order_ref_raw"],
+            "days_from_expected_payout": feats.get("days_off"),
+            "fee_lines_agreeing": (f"{feats.get('fee_lines_ok')}/"
                                    f"{feats.get('fee_lines_checked')}"),
             "order_columns": {k: mask_text(str(v)) for k, v in (s["order_extras"] or {}).items()},
-            "rules_score": float(s["score"]), "rules_notes": s["reasons"]})
+            "rules_score": float(s["score"]), "evidence": evidence})
     return "\n\n".join([
         "PAYMENT:\n" + json.dumps(_payment_block(conn, group), ensure_ascii=False),
-        "CANDIDATE ORDERS (best first by the rules):\n"
+        "CANDIDATES (best first by the rules):\n"
         + json.dumps(cand_rows, ensure_ascii=False),
         "EARLIER REVIEWS OF THIS PARTNER: " + _history(conn, group["partner_id"]),
         "Which candidate is this payment for?"])
@@ -194,7 +200,9 @@ def rerank(conn: Connection, llm: LLMClient, ids: list[int] | None = None,
             continue
         stats.asked += 1
         try:
-            result = llm.complete_json(SYSTEM, build_prompt(conn, group, cands))
+            quick = {"reasoning_effort": "none"} if "reasoning_effort" in llm.extra else None
+            result = llm.complete_json(SYSTEM, build_prompt(conn, group, cands),
+                                       max_tokens=ANSWER_TOKENS, extra=quick)
             choice, conf, reason = parse_choice(result.data, len(cands))
         except LLMUnavailable as exc:
             _store_error(conn, group["id"], f"AI unavailable: {exc}")

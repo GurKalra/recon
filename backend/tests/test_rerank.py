@@ -179,8 +179,8 @@ def test_the_model_sees_the_evidence_but_not_personal_data(queued):
     prompt = seen[0]
     assert "<email>" in prompt and "<phone>" in prompt
     assert "asha@example.com" not in prompt and "98765" not in prompt
-    for needed in ("PAYMENT", "CANDIDATE ORDERS", "EARLIER REVIEWS", "rules_notes",
-                   "days_from_expected", "expected_payout_on"):
+    for needed in ("PAYMENT", "CANDIDATES", "EARLIER REVIEWS", "evidence",
+                   "days_from_expected_payout"):
         assert needed in prompt
 
 

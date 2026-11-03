@@ -4,6 +4,8 @@ What it guarantees to callers:
   * JSON-only replies, parsed into a dict (or an exception); reasoning text is stripped
   * a hard timeout, and retries on rate limits and server errors (a rate limit waits as long
     as the provider asks)
+  * optional pacing: with a tokens-per-minute budget it waits BEFORE a call that would exceed it,
+    counting the tokens the provider reserves for the answer, so limits are rarely hit
   * `LLMUnavailable` when there is no key or the service is down: callers fall back to rules
   * `LLMBadOutput` when the reply is not usable JSON: callers may repair or fall back
   * if the provider's strict JSON mode rejects a reply (reasoning models sometimes think out
@@ -20,6 +22,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -97,7 +100,8 @@ class LLMClient:
     def __init__(self, api_key: str, model: str, base_url: str, timeout: float = 30.0,
                  transport: Transport | None = None, max_retries: int = 2,
                  sleep: Callable[[float], None] = time.sleep, temperature: float = 0.0,
-                 max_tokens: int = 3000, extra: dict | None = None):
+                 max_tokens: int = 3000, extra: dict | None = None, tpm_limit: int = 0,
+                 clock: Callable[[], float] = time.monotonic):
         self.api_key, self.model = api_key, model
         self.temperature, self.max_tokens = temperature, max_tokens
         self.extra = dict(extra or {})  # provider-specific request fields, e.g. reasoning_*
@@ -105,6 +109,8 @@ class LLMClient:
         self.timeout, self.max_retries, self._sleep = timeout, max_retries, sleep
         # optional hook: called as on_wait(seconds, reason) before waiting out a rate limit
         self.on_wait: Callable[[float, str], None] | None = None
+        self.tpm_limit, self._clock = tpm_limit, clock
+        self._spent: deque[list[float]] = deque()   # [time, tokens] of calls in the last minute
         self._transport = transport or _urllib_transport
 
     @classmethod
@@ -117,11 +123,36 @@ class LLMClient:
             extra["reasoning_effort"] = s.groq_reasoning_effort
         return cls(s.groq_api_key, s.groq_model, s.groq_base_url, s.llm_timeout_s, transport,
                    max_retries=4, temperature=s.groq_temperature, max_tokens=s.groq_max_tokens,
-                   extra=extra)
+                   extra=extra, tpm_limit=s.groq_tpm_limit)
 
     @property
     def available(self) -> bool:
         return bool(self.api_key)
+
+    def _pace(self, estimate: int) -> list[float]:
+        """Wait, if needed, until a call of about `estimate` tokens fits in the per-minute
+        budget. Returns the usage record for this call (adjusted once the reply is known)."""
+        now = self._clock()
+        while self._spent and self._spent[0][0] <= now - 60:
+            self._spent.popleft()
+        if self.tpm_limit and estimate <= self.tpm_limit:
+            used = sum(t for _, t in self._spent)
+            if used + estimate > self.tpm_limit:
+                excess, wait = used + estimate - self.tpm_limit, 0.0
+                for when, tokens in self._spent:     # oldest first: when do enough expire?
+                    excess -= tokens
+                    wait = max(0.0, when + 60 - now)
+                    if excess <= 0:
+                        break
+                if self.on_wait:
+                    self.on_wait(wait + 0.2, "pacing to stay under the token limit")
+                self._sleep(wait + 0.2)
+                now = self._clock()
+                while self._spent and self._spent[0][0] <= now - 60:
+                    self._spent.popleft()
+        record = [now, float(estimate)]
+        self._spent.append(record)
+        return record
 
     def _post(self, body: dict) -> tuple[int, str]:
         """One request with retries on rate limits and server errors."""
@@ -147,17 +178,22 @@ class LLMClient:
             return status, text
         raise LLMUnavailable("the AI service kept failing")  # pragma: no cover
 
-    def complete_json(self, system: str, user: str, max_tokens: int | None = None) -> LLMResult:
+    def complete_json(self, system: str, user: str, max_tokens: int | None = None,
+                      extra: dict | None = None) -> LLMResult:
+        """`max_tokens` and `extra` override the client's defaults for this one call (a simple
+        decision needs a small answer and no thinking; Groq counts the reserved answer tokens
+        against the per-minute limit)."""
         if not self.available:
             raise LLMUnavailable("no API key configured (set GROQ_API_KEY)")
+        cap = max_tokens or self.max_tokens
         body = {
-            "model": self.model, "temperature": self.temperature,
-            "max_tokens": max_tokens or self.max_tokens,
+            "model": self.model, "temperature": self.temperature, "max_tokens": cap,
             "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            **self.extra,
+            **self.extra, **(extra or {}),
         }
+        record = self._pace(int((len(system) + len(user)) / 3) + cap)
         started = time.perf_counter()
         status, text = self._post(body)
         if status == 400 and "json_validate_failed" in text:
@@ -184,8 +220,11 @@ class LLMClient:
         if choice.get("finish_reason") == "length":
             raise LLMBadOutput("the reply was cut off (raise GROQ_MAX_TOKENS or lower the "
                                "reasoning effort)")
+        usage = payload.get("usage") or {}
+        if usage.get("total_tokens"):
+            record[1] = float(usage["total_tokens"])   # what the call really used
         return LLMResult(parse_json_object(content or ""), payload.get("model", self.model),
-                         round(time.perf_counter() - started, 2), payload.get("usage") or {})
+                         round(time.perf_counter() - started, 2), usage)
 
 
 def _salvage_failed_generation(error_text: str) -> dict | None:
