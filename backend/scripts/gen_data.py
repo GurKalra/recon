@@ -521,8 +521,8 @@ class Generator:
         p.due_on = due
         leak = pick(rng.random(), leaks)
         delta = 0
-        if leak == "unpaid" and due > self.today:
-            leak = "none"
+        if leak == "unpaid" and (due > self.today or sum(a for _, a in build_lines(0)) <= 0):
+            leak = "none"  # not due yet, or fees exceed the sale so nothing is owed to us
         elif leak == "short_paid":
             delta = rng.randint(1100, 20000)
         elif leak == "overpaid":
@@ -534,6 +534,16 @@ class Generator:
             delta = TOL + 1
         elif leak == "noise":
             delta = rng.choice((-1, 1)) * rng.randint(1, TOL - 1)
+
+        if leak == "unpaid":
+            p.leak = leak
+            p.findings.append("unpaid_past_due")
+            p.delta = -sum(a for _, a in build_lines(0))
+            return
+        if pay > self.today:
+            p.pending = True  # nothing has arrived yet, so there is nothing to be wrong about
+            return
+
         p.leak, p.delta = leak, -delta
         if delta > TOL:
             p.findings.append("short_paid")
@@ -542,14 +552,6 @@ class Generator:
         elif delta:
             p.flags.append("tolerance_boundary" if abs(delta) == TOL else "rounding_noise")
 
-        if leak == "unpaid":
-            p.findings.append("unpaid_past_due")
-            p.delta = -sum(a for _, a in build_lines(0))
-            return
-        if pay > self.today:
-            p.pending = True
-            return
-
         lines = build_lines(delta)
         missing_id = rng.random() < 0.007
         duplicate = rng.random() < 0.003
@@ -557,14 +559,14 @@ class Generator:
             p.flags.append("missing_order_id")
         if duplicate:
             p.flags.append("duplicate_line")
+        utr = f"{p.channel}UTR{pay:%y%m%d}{rng.randint(100, 999)}"  # one UTR: a repeat is verbatim
         for _ in range(2 if duplicate else 1):
-            self._write_settlement(p, lines, pay, blank_ref=missing_id)
+            self._write_settlement(p, lines, pay, blank_ref=missing_id, utr=utr)
 
     def _write_settlement(self, p: Plan, lines: list[tuple[str, int]], pay: date,
-                          blank_ref: bool) -> None:
+                          blank_ref: bool, utr: str) -> None:
         ch, net = p.channel, sum(a for _, a in lines)
         by_type = {t: a for t, a in lines}
-        utr = f"{ch}UTR{pay:%y%m%d}{self.rng.randint(100, 999)}"
         if ch == "M1":
             cell = "" if blank_ref else p.ref
             sink = self.sinks["m1"]
@@ -685,8 +687,9 @@ class Generator:
         p.due_on = due
         table = (("unremitted", .016), ("freight_overcharge", .020),
                  ("cod_fee_overcharge", .008), ("noise", .04))
-        if pick(rng.random(), table[:1]) == "unremitted" and due <= self.today:
-            p.leak, p.delta = "unremitted", -(p.value - fwd - cod_fee)
+        owed = p.value - fwd - cod_fee  # what the courier should remit; <= 0 means nothing owed
+        if pick(rng.random(), table[:1]) == "unremitted" and due <= self.today and owed > 0:
+            p.leak, p.delta = "unremitted", -owed
             p.findings.append("unpaid_past_due")
             return
         if pay > self.today:

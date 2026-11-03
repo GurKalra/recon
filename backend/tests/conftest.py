@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from collections.abc import Iterator
 
@@ -27,6 +28,16 @@ def admin_dsn() -> str:
         pytest.skip(f"Postgres not reachable for DB tests: {exc}")
     return ADMIN_DSN
 
+def _drop_database(admin_dsn: str, name: str) -> None:
+    """Helper function for empty_db"""
+    """Drop a throwaway test database. Postgres workers can briefly block it, so retry."""
+    for _ in range(20):
+        try:
+            with psycopg.connect(admin_dsn, autocommit=True) as admin:
+                admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+            return
+        except (psycopg.errors.InsufficientPrivilege, psycopg.errors.ObjectInUse):
+            time.sleep(0.25)
 
 @pytest.fixture
 def empty_db(admin_dsn: str) -> Iterator[str]:
@@ -38,8 +49,7 @@ def empty_db(admin_dsn: str) -> Iterator[str]:
     try:
         yield dsn
     finally:
-        with psycopg.connect(admin_dsn, autocommit=True) as admin:
-            admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        _drop_database(admin_dsn, name)
 
 
 @pytest.fixture

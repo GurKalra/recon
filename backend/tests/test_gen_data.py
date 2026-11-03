@@ -289,3 +289,35 @@ def test_generation_is_fast_enough_for_the_stress_dataset(tmp_path: Path):
     start = time.perf_counter()
     g.Generator(tmp_path, 20_000, seed=1, today=TODAY, use_xlsx=True).run()
     assert time.perf_counter() - start < 30
+
+def test_a_leak_is_only_planted_where_the_money_actually_arrived(out: Path, truth):
+    """Regression: leaks used to be recorded for payouts not yet due, so truth.csv said
+    'short_paid' for an order that had no settlement rows at all."""
+    in_file = {r["order_id"].strip().upper() for r in read_csv(out / "settlement_m2.csv")}
+    settlement_leaks = {"short_paid", "boundary_ok", "boundary_flag", "noise", "overpaid"}
+    checked = 0
+    for ref, row in truth.items():
+        if row["channel"] != "M2" or row["leak"] not in settlement_leaks:
+            continue
+        if "missing_order_id" in row["flags"]:
+            continue
+        assert ref.upper() in in_file, (ref, row["leak"])
+        checked += 1
+    assert checked > 5
+
+
+def test_repeated_settlement_rows_are_verbatim_copies(out: Path):
+    """A duplicate must be byte-identical (same UTR), or it is a different payment."""
+    rows = [tuple(r.values()) for r in read_csv(out / "settlement_m2.csv")]
+    repeats = len(rows) - len(set(rows))
+    flagged = sum("duplicate_line" in r["flags"] for r in read_csv(out / "truth.csv")
+                  if r["channel"] == "M2")
+    assert repeats == flagged
+
+
+def test_an_unpaid_order_always_has_money_owed_to_us(truth):
+    """Regression: a very cheap, heavy item can have fees above its price. Nothing is owed on
+    such an order, so a missing payout is not a leak."""
+    unpaid = [r for r in truth.values() if "unpaid_past_due" in r["findings"]]
+    assert unpaid
+    assert all(int(r["delta_paise"]) < 0 for r in unpaid)

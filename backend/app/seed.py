@@ -11,6 +11,8 @@ from psycopg.types.json import Jsonb
 from app.ingest.catalog import SOURCES
 from app.ingest.reader import read_table
 
+_EFFECTIVE_FROM = "2000-01-01"  # the demo cards have always been in force
+
 
 def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
     """Create partners (from rate_cards.json), the 12 sources and their approved mappings.
@@ -34,6 +36,7 @@ def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
             """,
             {**p, "tol": cards["tolerance_paise"]},
         )
+    _seed_rate_cards(conn, cards)
     source_ids: dict[str, int] = {}
     for s in SOURCES:
         partner_id = conn.execute(
@@ -65,3 +68,59 @@ def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
             )
     conn.commit()
     return source_ids
+
+
+def _partner_id(conn: Connection, code: str) -> int:
+    return conn.execute("SELECT id FROM partners WHERE code = %s", (code,)).fetchone()["id"]
+
+
+def _seed_rate_cards(conn: Connection, cards: dict) -> None:
+    """Rate cards, zone prefixes and settings from rate_cards.json. Existing cards are kept."""
+    for zone, rule in cards["zone_rules"].items():
+        for prefix in rule["pincode_prefixes"]:
+            conn.execute(
+                "INSERT INTO zone_prefixes (prefix, zone) VALUES (%s, %s) "
+                "ON CONFLICT (prefix) DO UPDATE SET zone = EXCLUDED.zone", (prefix, zone))
+    conn.execute(
+        "INSERT INTO recon_settings (key, value) VALUES ('receipt_wait_days', %s) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        (Jsonb(cards["receipt_wait_days"]),))
+
+    channel_cards = dict(cards["channel_cards"])
+    # The website's payment gateway fee is a channel rule with no commission.
+    channel_cards["WEB"] = {"commission_bps": 0, "fixed_paise": 0, "ship_slabs": [],
+                            "ship_extra_per_kg_paise": 0, "tcs_bps": 0, "tds_bps": 0,
+                            "pg_fee_bps": cards["pg_fee_bps"]}
+    for code, c in channel_cards.items():
+        partner_id = _partner_id(conn, code)
+        card = conn.execute(
+            """
+            INSERT INTO channel_cards (partner_id, effective_from, commission_bps, fixed_paise,
+                                       ship_extra_per_kg_paise, tcs_bps, tds_bps, pg_fee_bps, note)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'built-in demo card')
+            ON CONFLICT (partner_id, effective_from) DO NOTHING RETURNING id
+            """,
+            (partner_id, _EFFECTIVE_FROM, c["commission_bps"], c["fixed_paise"],
+             c["ship_extra_per_kg_paise"], c["tcs_bps"], c["tds_bps"], c.get("pg_fee_bps", 0)),
+        ).fetchone()
+        if card:  # only a brand-new card gets its slabs
+            for max_g, fee in c["ship_slabs"]:
+                conn.execute("INSERT INTO channel_ship_slabs (card_id, max_g, fee_paise) "
+                             "VALUES (%s, %s, %s)", (card["id"], max_g, fee))
+
+    for code, c in cards["courier_cards"].items():
+        partner_id = _partner_id(conn, code)
+        card = conn.execute(
+            """
+            INSERT INTO courier_cards (partner_id, effective_from, cod_flat_paise, cod_bps,
+                                       return_pct, note)
+            VALUES (%s, %s, %s, %s, %s, 'built-in demo card')
+            ON CONFLICT (partner_id, effective_from) DO NOTHING RETURNING id
+            """,
+            (partner_id, _EFFECTIVE_FROM, c["cod_flat"], c["cod_bps"], c["return_pct"]),
+        ).fetchone()
+        if card:
+            for zone in c["base"]:
+                conn.execute(
+                    "INSERT INTO courier_zone_rates (card_id, zone, base_paise, addl_paise) "
+                    "VALUES (%s, %s, %s, %s)", (card["id"], zone, c["base"][zone], c["addl"][zone]))
