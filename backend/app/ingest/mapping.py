@@ -7,8 +7,9 @@ hand-edited spec fails with a clear message before it can touch any data.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -70,6 +71,21 @@ class NetCheck(_Strict):
     tolerance_paise: int = Field(default=100, ge=0)
 
 
+_EXTRA_KEY = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+MAX_EXTRAS = 10
+
+
+def _check_extras(extras: dict[str, str]) -> dict[str, str]:
+    """Optional extra columns kept as-is (SKU, city, remarks...): {key in our data: column}."""
+    if len(extras) > MAX_EXTRAS:
+        raise ValueError(f"at most {MAX_EXTRAS} extra columns can be kept")
+    for key in extras:
+        if not _EXTRA_KEY.match(key):
+            raise ValueError(f"extra column key {key!r} must be lower-case letters, digits "
+                             "and underscores")
+    return extras
+
+
 class LedgerFields(_Strict):
     order_ref: str | None = None
     awb: str | None = None
@@ -77,6 +93,12 @@ class LedgerFields(_Strict):
     date: DateCol
     emitters: tuple[Emitter, ...] = Field(min_length=1)
     net_check: NetCheck | None = None
+    extras: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _extras_are_valid(self) -> Self:
+        _check_extras(self.extras)
+        return self
 
 
 class OrderFields(_Strict):
@@ -95,6 +117,12 @@ class OrderFields(_Strict):
     awb: str | None = None
     delivered_on: DateCol | None = None
     returned_on: DateCol | None = None
+    extras: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _extras_are_valid(self) -> Self:
+        _check_extras(self.extras)
+        return self
 
 
 class ReceiptFields(_Strict):
@@ -139,9 +167,14 @@ class MappingSpec(_Strict):
                     add(col)
             if ledger.net_check:
                 add(ledger.net_check.column)
+            for col in ledger.extras.values():
+                add(col)
         elif self.orders:
-            for value in self.orders.model_dump().values():
-                if isinstance(value, str):
+            for name, value in self.orders.model_dump().items():
+                if name == "extras":
+                    for col in value.values():
+                        add(col)
+                elif isinstance(value, str):
                     add(value)
                 elif isinstance(value, dict):
                     add(value["column"])

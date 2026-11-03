@@ -46,10 +46,11 @@ SOURCES: tuple[SourceDef, ...] = (
             "delivery_status": "Delivery Status",
             "delivered_on": {"column": "Delivered On", "format": "iso"},
             "returned_on": {"column": "Returned On", "format": "iso"},
+            "extras": {"sku": "SKU", "city": "City"},
         }}),
     SourceDef("M1", "settlement", "Settlement report (xlsx)", "settlement_m1.xlsx", _ledger(
         {"kind": "xlsx", "footer_markers": ["Total"]},
-        order_ref="Order ID", reference="UTR",
+        order_ref="Order ID", reference="UTR", extras={"sku": "SKU"},
         date={"column": "Settlement Date", "format": "dmy"},
         emitters=[{
             "amount": "Amount (INR)",
@@ -60,6 +61,7 @@ SOURCES: tuple[SourceDef, ...] = (
                 "Return Shipping Fee": "return_fee", "TCS": "tcs", "TDS": "tds"}}])),
     SourceDef("M2", "settlement", "Settlement report", "settlement_m2.csv", _ledger(
         _CSV, order_ref="order_id", reference="utr",
+        extras={"city": "city", "remarks": "remarks"},
         date={"column": "settled_on", "format": "dmony"},
         emitters=[
             _emit("gross_sale", "sale"),
@@ -82,6 +84,7 @@ SOURCES: tuple[SourceDef, ...] = (
                 "ItemWithheldTax|TCS": "tcs", "ItemWithheldTax|TDS": "tds"}}])),
     SourceDef("Q1", "settlement", "Payout report", "settlement_q1.csv", _ledger(
         _CSV, order_ref="Order No", date={"column": "Payout Date", "format": "dmy"},
+        extras={"store_city": "Store City"},
         emitters=[_emit("Sale Value", "sale"), _emit("Platform Fee", "commission", -1),
                   _emit("TCS", "tcs", -1), _emit("TDS", "tds", -1)],
         net_check={"column": "Net Payout"})),
@@ -92,6 +95,7 @@ SOURCES: tuple[SourceDef, ...] = (
         net_check={"column": "Settled Amount"})),
     SourceDef("WEB", "settlement", "Payment gateway settlement", "settlement_web_pg.csv", _ledger(
         _CSV, order_ref="Order ID", date={"column": "Settled On", "format": "iso"},
+        extras={"narration": "Narration"},
         emitters=[
             {"amount": "Gross (INR)", "line_type_from": ["Type"],
              "line_type_map": {"settlement": "sale", "refund": "refund"}},

@@ -18,12 +18,12 @@ _CHUNK_ROWS = 50_000
 _STAGING_DDL = {
     "stg_ledger": """
         row_no int, emit_idx smallint, order_ref text, order_ref_raw text, awb text,
-        line_type text, amount_paise bigint, occurred_on date, reference text""",
+        line_type text, amount_paise bigint, occurred_on date, reference text, extras text""",
     "stg_orders": """
         row_no int, order_ref text, order_ref_raw text, channel_code text, courier_code text,
         awb text, ordered_on date, delivered_on date, returned_on date, payment_mode text,
         value_paise bigint, weight_g int, length_cm int, width_cm int, height_cm int,
-        pincode text, delivery_status text""",
+        pincode text, delivery_status text, extras text""",
     "stg_receipts": "row_no int, order_ref text, received_on date, condition text",
 }
 
@@ -69,10 +69,10 @@ def load_ledger(conn: Connection, import_id: int, partner_id: int, partner_type:
         )
         INSERT INTO ledger_lines (import_id, partner_id, order_id, order_ref, order_ref_raw, awb,
                                   line_type, amount_paise, occurred_on, reference, line_hash,
-                                  dup_seq, source_row)
+                                  dup_seq, source_row, extras)
         SELECT %(imp)s, %(pid)s, o.id, seq.order_ref, seq.order_ref_raw, seq.awb, seq.line_type,
                seq.amount_paise, seq.occurred_on, seq.reference, seq.line_hash, seq.dup_seq,
-               seq.row_no
+               seq.row_no, NULLIF(jsonb_strip_nulls(seq.extras::jsonb), '{{}}'::jsonb)
         FROM seq
         LEFT JOIN orders o ON o.order_ref = seq.order_ref AND o.{owner} = %(pid)s
         ON CONFLICT (partner_id, line_hash, dup_seq) DO NOTHING
@@ -94,10 +94,11 @@ def load_orders(conn: Connection, import_id: int, df: pl.DataFrame) -> LoadCount
             INSERT INTO orders (channel_partner_id, courier_partner_id, order_ref, order_ref_raw,
                                 awb, ordered_on, delivered_on, returned_on, payment_mode,
                                 value_paise, weight_g, length_cm, width_cm, height_cm, pincode,
-                                delivery_status, import_id)
+                                delivery_status, import_id, extras)
             SELECT ch.id, co.id, s.order_ref, s.order_ref_raw, s.awb, s.ordered_on,
                    s.delivered_on, s.returned_on, s.payment_mode, s.value_paise, s.weight_g,
-                   s.length_cm, s.width_cm, s.height_cm, s.pincode, s.delivery_status, %(imp)s
+                   s.length_cm, s.width_cm, s.height_cm, s.pincode, s.delivery_status, %(imp)s,
+                   NULLIF(jsonb_strip_nulls(s.extras::jsonb), '{}'::jsonb)
             FROM (SELECT DISTINCT ON (channel_code, order_ref) *
                   FROM stg_orders ORDER BY channel_code, order_ref, row_no DESC) s
             JOIN partners ch ON ch.code = s.channel_code
@@ -106,12 +107,15 @@ def load_orders(conn: Connection, import_id: int, df: pl.DataFrame) -> LoadCount
                 courier_partner_id = EXCLUDED.courier_partner_id, awb = EXCLUDED.awb,
                 delivered_on = EXCLUDED.delivered_on, returned_on = EXCLUDED.returned_on,
                 delivery_status = EXCLUDED.delivery_status, value_paise = EXCLUDED.value_paise,
+                extras = coalesce(EXCLUDED.extras, orders.extras),
                 import_id = EXCLUDED.import_id, updated_at = now()
             WHERE (orders.courier_partner_id, orders.awb, orders.delivered_on,
-                   orders.returned_on, orders.delivery_status, orders.value_paise)
+                   orders.returned_on, orders.delivery_status, orders.value_paise,
+                   orders.extras)
                   IS DISTINCT FROM
                   (EXCLUDED.courier_partner_id, EXCLUDED.awb, EXCLUDED.delivered_on,
-                   EXCLUDED.returned_on, EXCLUDED.delivery_status, EXCLUDED.value_paise)
+                   EXCLUDED.returned_on, EXCLUDED.delivery_status, EXCLUDED.value_paise,
+                   coalesce(EXCLUDED.extras, orders.extras))
             RETURNING (xmax = 0) AS inserted
         )
         SELECT count(*) FILTER (WHERE inserted) AS inserted,

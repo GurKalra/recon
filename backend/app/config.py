@@ -1,4 +1,4 @@
-"""Application settings, read from environment variables."""
+"""Application settings, read from environment variables (and an optional .env file)."""
 
 from __future__ import annotations
 
@@ -18,6 +18,18 @@ class Settings(BaseSettings):
     db_pool_min: int = 1
     db_pool_max: int = 10
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    # AI features. Everything works without a key: the rules-only path is used instead.
+    groq_api_key: str = ""
+    groq_model: str = "qwen/qwen3.8-27b"
+    # Reasoning models (Qwen, gpt-oss, ...): hide the thinking so only the JSON comes back, and
+    # keep the thinking short. Leave both empty for models that do not reason.
+    groq_reasoning_format: str = "hidden"
+    groq_reasoning_effort: str = "low"   # none | low | medium | high
+    groq_temperature: float = 0.3        # Qwen advises against 0 for reasoning models
+    groq_max_tokens: int = 4000          # thinking tokens count towards this
+    groq_base_url: str = "https://api.groq.com/openai/v1"
+    llm_timeout_s: float = 30.0
 
 
 @lru_cache

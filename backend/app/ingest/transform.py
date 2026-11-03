@@ -21,6 +21,15 @@ SELLING_TYPES = ("website", "marketplace", "quick_commerce")
 _NO_TEXT = pl.lit(None, dtype=pl.Utf8)
 
 
+def _extras(extras: dict[str, str]) -> pl.Expr:
+    """The optional extra columns of a row as one JSON object (text), or null. Empty cells are
+    dropped by the database (jsonb_strip_nulls) when the row is stored."""
+    if not extras:
+        return _NO_TEXT
+    fields = [nz.text(norm_header(col)).alias(key) for key, col in extras.items()]
+    return pl.struct(fields).struct.json_encode()
+
+
 @dataclass
 class Transformed:
     good: pl.DataFrame
@@ -73,6 +82,7 @@ def _ledger(table: Table, f: LedgerFields) -> Transformed:
     ref_col = c(f.order_ref) if f.order_ref else None
     cols.append((nz.canonical_ref(ref_col) if ref_col else _NO_TEXT).alias("order_ref"))
     cols.append((nz.text(ref_col) if ref_col else _NO_TEXT).alias("order_ref_raw"))
+    cols.append(_extras(f.extras).alias("extras"))
     if f.awb:
         awb, mangled = nz.awb(c(f.awb))
         cols += [awb.alias("awb"), mangled.alias("_awb_mangled")]
@@ -126,7 +136,7 @@ def _ledger(table: Table, f: LedgerFields) -> Transformed:
             "order_ref", "order_ref_raw", "awb",
             pl.col(f"_type{i}").alias("line_type"),
             (pl.col(f"_amt{i}") * e.sign).alias("amount_paise"),
-            "occurred_on", "reference",
+            "occurred_on", "reference", "extras",
         ).filter(pl.col("amount_paise").is_not_null() & pl.col("line_type").is_not_null())
         if e.skip_zero:
             frame = frame.filter(pl.col("amount_paise") != 0)
@@ -179,6 +189,7 @@ def _orders(table: Table, f: OrderFields, partner_types: dict[str, str]) -> Tran
         else:
             parsed, bad = nz.whole_int(c(column), lo, hi)
             cols += [parsed.alias(name), bad.alias(f"_{name}_bad")]
+    cols.append(_extras(f.extras).alias("extras"))
     pin = nz.text(c(f.pincode)) if f.pincode else _NO_TEXT
     cols += [pin.alias("pincode"),
              (pin.is_not_null() & ~pin.str.contains(r"^[0-9]{6}$").fill_null(False))
@@ -215,7 +226,7 @@ def _orders(table: Table, f: OrderFields, partner_types: dict[str, str]) -> Tran
     result.good = good.select(
         "row_no", "order_ref", "order_ref_raw", "channel_code", "courier_code", "awb",
         "ordered_on", "delivered_on", "returned_on", "payment_mode", "value_paise",
-        "weight_g", "length_cm", "width_cm", "height_cm", "pincode", "delivery_status")
+        "weight_g", "length_cm", "width_cm", "height_cm", "pincode", "delivery_status", "extras")
     return result
 
 

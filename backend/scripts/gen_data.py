@@ -284,6 +284,18 @@ TRANSIT_DAYS = {"A": (1, 2), "B": (2, 4), "C": (3, 6), "D": (4, 8)}
 RETURN_RATE = {"M": 0.09, "Q": 0.04, "WEB_PREPAID": 0.06}
 COD_RTO_RATE = 0.12
 
+SKUS = ("BED-KING-GREY", "BED-KING-BLUE", "BED-QUEEN-WHITE", "BED-SINGLE-PINK", "TWL-BATH-WHT",
+        "TWL-HAND-GRN", "PIL-COVER-SET2", "CUSH-COVER-SET4", "BLNK-DBL-BEIGE", "CURT-DOOR-TEAL",
+        "QUILT-KING-RED", "MAT-YOGA-PRP")
+CITY_BY_PREFIX = {
+    "560": "Bengaluru", "561": "Bengaluru", "570": "Mysuru", "575": "Mangaluru",
+    "577": "Shivamogga", "580": "Hubballi", "585": "Kalaburagi", "590": "Belagavi",
+    "110": "Delhi", "400": "Mumbai", "600": "Chennai", "700": "Kolkata", "500": "Hyderabad",
+    "411": "Pune", "380": "Ahmedabad", "302": "Jaipur", "226": "Lucknow", "282": "Agra",
+    "462": "Bhopal", "751": "Bhubaneswar", "781": "Guwahati", "842": "Muzaffarpur",
+    "834": "Ranchi", "160": "Chandigarh",
+}
+
 M1_TYPES = {
     "sale": "Item Price", "refund": "Refund", "commission": "Commission",
     "fixed_fee": "Fixed Closing Fee", "shipping_fee": "Shipping Fee",
@@ -301,15 +313,17 @@ CB_ZONE_LABEL = {"A": "Z1", "B": "Z2", "C": "Z3", "D": "Z4"}
 HEADERS = {
     "orders": ["Order ID", "Channel", "Order Date", "Payment Mode", "Order Value", "Pincode",
                "Weight (g)", "Length (cm)", "Width (cm)", "Height (cm)", "Courier", "AWB",
-               "Delivery Status", "Delivered On", "Returned On"],
-    "m1": ["Order ID", "Settlement Date", "Transaction Type", "Amount (INR)", "UTR"],
+               "Delivery Status", "Delivered On", "Returned On", "SKU", "City"],
+    "m1": ["Order ID", "Settlement Date", "Transaction Type", "Amount (INR)", "UTR", "SKU"],
     "m2": ["order_id", "settled_on", "gross_sale", "commission", "fixed_fee", "shipping_fee",
-           "tcs", "tds", "refund", "return_fee", "net_payout", "utr"],
+           "tcs", "tds", "refund", "return_fee", "net_payout", "utr", "city", "remarks"],
     "m3": ["settlement-id", "posted-date", "order-id", "amount-type", "amount-description",
            "amount"],
-    "q1": ["Order No", "Payout Date", "Sale Value", "Platform Fee", "TCS", "TDS", "Net Payout"],
+    "q1": ["Order No", "Payout Date", "Sale Value", "Platform Fee", "TCS", "TDS", "Net Payout",
+           "Store City"],
     "q2": ["Ref", "Date", "Order Amount", "Commission", "TCS", "TDS", "Settled Amount"],
-    "pg": ["Order ID", "Settled On", "Type", "Gross (INR)", "Fee (INR)", "Net (INR)"],
+    "pg": ["Order ID", "Settled On", "Type", "Gross (INR)", "Fee (INR)", "Net (INR)",
+           "Narration"],
     "cod_ca": ["AWB", "Order Ref", "Delivered On", "Remitted On", "COD Collected",
                "Freight Charged", "COD Fee", "Billed Weight (g)", "Net Remitted", "UTR"],
     "cod_cb": ["Waybill", "Client Order No", "Delivery Date", "Payout Date", "Cod Amount",
@@ -355,6 +369,8 @@ class Plan:
     delta: int = 0  # money effect on the brand vs expected (negative = we lost money)
     due_on: date | None = None
     pending: bool = False
+    sku: str = ""
+    city: str = ""
 
     @property
     def grams(self) -> int:
@@ -443,6 +459,9 @@ class Generator:
             mode=mode, value=value * 100, pincode=pincode, zone=zone, weight_g=weight,
             dims=dims, courier=courier, awb=awb,
         )
+        signals = random.Random(f"{self.seed}:{plan.ref}:signals")  # separate from the main stream
+        plan.sku = signals.choice(SKUS)
+        plan.city = CITY_BY_PREFIX[plan.pincode[:3]]
         self._lifecycle(plan)
         self._write_order(plan)
         if channel == "WEB":
@@ -483,7 +502,7 @@ class Generator:
             p.ref, p.channel, p.ordered_on.isoformat(), p.mode, money(p.value), p.pincode,
             p.weight_g, *p.dims, p.courier or "", p.awb or "", p.status,
             p.delivered_on.isoformat() if p.delivered_on else "",
-            p.returned_on.isoformat() if p.returned_on else "",
+            p.returned_on.isoformat() if p.returned_on else "", p.sku, p.city,
         ])
 
     # ---- marketplaces and quick-commerce -------------------------------------------------
@@ -563,6 +582,25 @@ class Generator:
         for _ in range(2 if duplicate else 1):
             self._write_settlement(p, lines, pay, blank_ref=missing_id, utr=utr)
 
+    def _remark(self, p: Plan, blank_ref: bool) -> str:
+        """Free text a partner puts next to a payment. When the order id column is blank the
+        text often still holds a piece of the reference, sometimes mistyped; sometimes nothing
+        useful. Deterministic per order, so a repeated row is a verbatim repeat."""
+        r = random.Random(f"{self.seed}:{p.ref}:remark")
+        canon = "".join(ch for ch in p.ref.upper() if ch.isalnum())
+        if not blank_ref:
+            return f"Settlement for order {p.ref}" if r.random() < 0.7 else ""
+        roll = r.random()
+        if roll < 0.45:  # the tail of the reference, 10% of the time with one character wrong
+            tail = list(canon[-r.randint(5, 7):])
+            if r.random() < 0.10:
+                i = r.randrange(len(tail))
+                tail[i] = "X" if tail[i] != "X" else "Y"
+            return f"Pymt ref ...{''.join(tail)}"
+        if roll < 0.65:  # the start of the reference
+            return f"Order {p.ref[:max(6, len(p.ref) // 2)]}"
+        return "Settlement" if roll < 0.85 else ""
+
     def _write_settlement(self, p: Plan, lines: list[tuple[str, int]], pay: date,
                           blank_ref: bool, utr: str) -> None:
         ch, net = p.channel, sum(a for _, a in lines)
@@ -571,11 +609,11 @@ class Generator:
             cell = "" if blank_ref else p.ref
             sink = self.sinks["m1"]
             for t, a in lines:
-                row = [cell, fdate(pay, "dmy"), M1_TYPES[t], a / 100, utr]
+                row = [cell, fdate(pay, "dmy"), M1_TYPES[t], a / 100, utr, p.sku]
                 if isinstance(sink, XlsxSink):
                     sink.write_amount_row(row, a, 3)
                 else:
-                    sink.write([cell, fdate(pay, "dmy"), M1_TYPES[t], money(a), utr])
+                    sink.write([cell, fdate(pay, "dmy"), M1_TYPES[t], money(a), utr, p.sku])
         elif ch == "M2":
             cell = "" if blank_ref else p.ref.lower() + " "  # lower-case, trailing space
 
@@ -586,7 +624,7 @@ class Generator:
                 cell, fdate(pay, "dmony"), money(by_type["sale"]), money(neg("commission")),
                 money(neg("fixed_fee")), money(neg("shipping_fee")), money(neg("tcs")),
                 money(neg("tds")), money(neg("refund")), money(neg("return_fee")),
-                money(net), utr,
+                money(net), utr, p.city, self._remark(p, blank_ref),
             ])
         elif ch == "M3":
             cell = "" if blank_ref else p.ref
@@ -599,7 +637,7 @@ class Generator:
             self.sinks["q1"].write([
                 cell, fdate(pay, "dmy"), money(by_type["sale"], "inr"),
                 money(-by_type["commission"], "inr"), money(-by_type["tcs"], "inr"),
-                money(-by_type["tds"], "inr"), money(net, "inr"),
+                money(-by_type["tds"], "inr"), money(net, "inr"), p.city,
             ])
         else:  # Q2: deductions shown as negatives in brackets
             cell = "" if blank_ref else p.ref
@@ -648,12 +686,14 @@ class Generator:
             cell = "" if missing_id else p.ref
             for _ in range(2 if duplicate else 1):
                 self.sinks["pg"].write([cell, fdate(pay, "iso"), "settlement", money(p.value),
-                                        money(fee), money(p.value - fee)])
+                                        money(fee), money(p.value - fee),
+                                        self._remark(p, bool(missing_id))])
         if p.state == "returned":
             _, refund_on = self._dates(p.returned_on, sla, max_early=1)
             if refund_on <= self.today:
                 self.sinks["pg"].write([p.ref, fdate(refund_on, "iso"), "refund",
-                                        money(-p.value), money(-fee), money(-p.value + fee)])
+                                        money(-p.value), money(-fee), money(-p.value + fee),
+                                        f"Refund {p.ref}"])
             else:
                 p.pending = True
         elif p.state == "in_transit":

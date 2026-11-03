@@ -14,6 +14,10 @@ order has no other payment recorded. How it is scored (0 to 1):
     0.20  how many of the fee lines (commission, TCS, TDS, shipping, ...) agree with the rate
           card; half marks when the payment carries no checkable fee lines
 
+On top of that, extra columns the partner's file carried (remarks, SKU, city) adjust the score:
+a piece of the order reference in the remarks is strong evidence for that order, a matching SKU
+or city adds a little, a different city or SKU counts against it. With no extras nothing changes.
+
 This is deliberately transparent: every suggestion carries the reasons and the numbers behind
 it. Confidence is 'high' only when the score is high AND the runner-up is clearly worse AND no
 other payment wants the same order. A person always makes the final call.
@@ -21,8 +25,9 @@ other payment wants the same order. A person always makes the final call.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
@@ -76,6 +81,71 @@ def reasons_for(value_paise: int, days_off: int, n_ok: int, n_checked: int) -> l
         out.append(f"{n_ok} of {n_checked} fee lines agree with the rate card")
     out.append("This order has no other payment recorded")
     return out
+
+
+# ---- extra evidence from the partner's own columns (pure, unit-tested) -------------------------
+
+_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-_/]{4,}")
+_STOP = {"SETTLEMENT", "PAYMENT", "REFUND", "ORDER", "PYMT", "REFERENCE", "TRANSFER"}
+
+
+@dataclass
+class Evidence:
+    adjust: float = 0.0
+    notes: list[str] = field(default_factory=list)
+    detail: dict = field(default_factory=dict)
+
+
+def _near(token: str, canon: str) -> bool:
+    """token appears in canon, allowing one wrong character (a mistyped reference)."""
+    n = len(token)
+    if n < 6 or n > len(canon):
+        return False
+    return any(sum(a != b for a, b in zip(token, canon[i:i + n], strict=True)) <= 1
+               for i in range(len(canon) - n + 1))
+
+
+def extras_evidence(group: dict[str, str], order_ref: str,
+                    order_extras: dict[str, str] | None) -> Evidence:
+    """How much the partner's extra columns say about whether this payment is for this order."""
+    ev = Evidence()
+    canon = re.sub(r"[^A-Z0-9]", "", order_ref.upper())
+    best = 0.0
+    for value in group.values():
+        for tok in _TOKEN.findall(str(value).upper()):
+            tok = re.sub(r"[^A-Z0-9]", "", tok)
+            if tok in _STOP or len(tok) < 5:
+                continue
+            if tok in canon:
+                strength = 0.30 if len(tok) >= 0.6 * len(canon) else 0.22
+                if strength > best:
+                    best = strength
+                    ev.detail["fragment"] = tok
+                    ev.notes.append(f"The remarks contain '{tok}', part of this order's "
+                                    "reference")
+            elif _near(tok, canon) and best < 0.12:
+                best = 0.12
+                ev.detail["fragment"] = tok
+                ev.notes.append(f"The remarks contain '{tok}', one character off a part of "
+                                "this order's reference")
+    ev.adjust += best
+    theirs = {k.lower(): str(v).strip().lower() for k, v in (order_extras or {}).items()}
+    for kind, plus, minus in (("sku", 0.10, -0.15), ("city", 0.08, -0.15)):
+        mine = next((str(v).strip().lower() for k, v in group.items() if kind in k.lower()),
+                    None)
+        other = next((v for k, v in theirs.items() if kind in k), None)
+        if not mine or not other:
+            continue
+        if mine == other:
+            ev.adjust += plus
+            ev.detail[kind] = "match"
+            ev.notes.append(f"Same {kind.upper() if kind == 'sku' else kind}: {other}")
+        else:
+            ev.adjust += minus
+            ev.detail[kind] = "differs"
+            ev.notes.append(f"Different {kind.upper() if kind == 'sku' else kind}: the "
+                            f"payment says {mine}, the order says {other}")
+    return ev
 
 
 # ---- 1. groups ---------------------------------------------------------------------------------
@@ -174,7 +244,8 @@ def detect_groups(conn: Connection) -> int:
 
 _CANDIDATES = """
 WITH pairs AS MATERIALIZED (   -- cheap filters first: partner, exact value, date window, unpaid
-    SELECT g.id AS group_id, g.line_ids, o.id AS order_id, o.order_ref_raw, o.value_paise,
+    SELECT g.id AS group_id, g.line_ids, o.id AS order_id, o.order_ref_raw, o.order_ref,
+           o.extras AS order_extras, o.value_paise,
            o.ordered_on, o.channel_partner_id, ch.tolerance_paise,
            greatest(coalesce(o.weight_g, 0),
                     (coalesce(o.length_cm, 0)::bigint * coalesce(o.width_cm, 0)
@@ -192,7 +263,8 @@ WITH pairs AS MATERIALIZED (   -- cheap filters first: partner, exact value, dat
                       WHERE e.order_id = o.id AND e.partner_id = o.channel_partner_id
                         AND e.line_type = 'sale' AND e.dup_seq = 0)
 )
-SELECT p.group_id, p.order_id, p.order_ref_raw, p.value_paise, p.days_off, p.due_on,
+SELECT p.group_id, p.order_id, p.order_ref_raw, p.order_ref, p.order_extras, p.value_paise,
+       p.days_off, p.due_on,
        fc.n_checked, fc.n_ok
 FROM pairs p
 LEFT JOIN LATERAL (
@@ -224,6 +296,20 @@ CROSS JOIN LATERAL (
 """
 
 
+def _group_extras(conn: Connection) -> dict[int, dict[str, str]]:
+    """For every open payment, the extra columns its lines carried (first value per key)."""
+    out: dict[int, dict[str, str]] = {}
+    rows = conn.execute(
+        """SELECT g.id AS gid, l.extras FROM match_groups g
+           JOIN ledger_lines l ON l.id = ANY(g.line_ids)
+           WHERE g.status = 'open' AND l.extras IS NOT NULL""").fetchall()
+    for r in rows:
+        bucket = out.setdefault(r["gid"], {})
+        for key, value in r["extras"].items():
+            bucket.setdefault(key, str(value))
+    return out
+
+
 def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
     """(Re)build the pending suggestions for every open group. Rejected suggestions are
     remembered and never offered again."""
@@ -231,14 +317,20 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
     rejected = {(r["group_id"], r["order_id"]) for r in conn.execute(
         "SELECT group_id, order_id FROM match_suggestions WHERE status = 'rejected'").fetchall()}
 
+    group_extras = _group_extras(conn)
     per_group: dict[int, list[dict]] = defaultdict(list)
     for c in cands:
         if (c["group_id"], c["order_id"]) in rejected:
             continue
-        c["score"] = score(c["days_off"], c["n_ok"], c["n_checked"])
+        c["base"] = score(c["days_off"], c["n_ok"], c["n_checked"])
+        ev = extras_evidence(group_extras.get(c["group_id"], {}), c["order_ref"],
+                             c["order_extras"])
+        c["evidence"] = ev
+        c["raw"] = round(c["base"] + ev.adjust, 3)   # can exceed 1; only the ranking uses it
+        c["score"] = min(1.0, max(0.0, c["raw"]))
         per_group[c["group_id"]].append(c)
     for rows in per_group.values():
-        rows.sort(key=lambda c: (-c["score"], abs(c["days_off"]), c["order_id"]))
+        rows.sort(key=lambda c: (-c["raw"], abs(c["days_off"]), c["order_id"]))
 
     # an order that is the best candidate of several payments is contested
     best_for: dict[int, set[int]] = defaultdict(set)
@@ -249,12 +341,13 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
                     WHERE s.group_id = g.id AND g.status = 'open' AND s.status = 'pending'""")
     made = 0
     for gid, rows in per_group.items():
-        runner = rows[1]["score"] if len(rows) > 1 else None
+        runner = rows[1]["raw"] if len(rows) > 1 else None
         for rank, c in enumerate(rows[:top_n], start=1):
             contested = len(best_for.get(c["order_id"], ())) > 1
-            conf = confidence(c["score"], runner if rank == 1 else None, contested) \
+            conf = confidence(c["raw"], runner if rank == 1 else None, contested) \
                 if rank == 1 else ("medium" if c["score"] >= 0.65 else "low")
             why = reasons_for(c["value_paise"], c["days_off"], c["n_ok"], c["n_checked"])
+            why = why[:-1] + c["evidence"].notes + why[-1:]
             if contested:
                 why.append("Another payment is also best matched to this order")
             conn.execute(
@@ -271,7 +364,8 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
                 (gid, c["order_id"], rank, c["score"], conf, Jsonb(why),
                  Jsonb({"days_off": c["days_off"], "due_on": c["due_on"].isoformat(),
                         "fee_lines_ok": c["n_ok"], "fee_lines_checked": c["n_checked"],
-                        "contested": contested})))
+                        "contested": contested, "base_score": c["base"], "raw_score": c["raw"],
+                        "evidence": c["evidence"].detail})))
             made += 1
     open_groups = conn.execute(
         "SELECT count(*) AS n FROM match_groups WHERE status = 'open'").fetchone()["n"]
@@ -413,7 +507,7 @@ def queue(conn: Connection, status: str = "open", limit: int = 50, offset: int =
         """
         SELECT g.id, g.partner_id, p.code AS partner_code, p.name AS partner_name, g.reference,
                g.occurred_on, g.n_lines, g.sale_paise, g.net_paise, g.status, g.linked_order_id,
-               g.link_method, g.note
+               g.link_method, g.note, g.ai_verdict, g.ai_note
         FROM match_groups g JOIN partners p ON p.id = g.partner_id
         WHERE g.status = %s
         ORDER BY abs(coalesce(g.sale_paise, 0)) DESC, g.id
@@ -425,7 +519,8 @@ def queue(conn: Connection, status: str = "open", limit: int = 50, offset: int =
     for s in conn.execute(
             """
             SELECT s.id, s.group_id, s.order_id, o.order_ref_raw, o.value_paise, o.ordered_on,
-                   s.rank, s.score, s.confidence, s.reasons, s.status
+                   s.rank, s.score, s.confidence, s.reasons, s.status, s.ai_pick, s.ai_confidence,
+                   s.ai_reason
             FROM match_suggestions s JOIN orders o ON o.id = s.order_id
             WHERE s.group_id = ANY(%s) AND s.status IN ('pending', 'accepted')
             ORDER BY s.group_id, s.rank
