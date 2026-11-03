@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.rows import dict_row
 
 from app.migrate import migrate
 
@@ -45,3 +46,10 @@ def empty_db(admin_dsn: str) -> Iterator[str]:
 def migrated_db(empty_db: str) -> str:
     migrate(empty_db)
     return empty_db
+
+
+@pytest.fixture
+def dict_conn(migrated_db: str) -> Iterator[psycopg.Connection]:
+    """A connection on a fresh migrated database, returning dict rows like the app's pool."""
+    with psycopg.connect(migrated_db, row_factory=dict_row) as conn:
+        yield conn
