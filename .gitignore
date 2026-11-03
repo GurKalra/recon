@@ -1,0 +1,26 @@
+# Secrets and local config
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node (frontend, later)
+node_modules/
+dist/
+
+# Generated data. Regenerate with backend/scripts/gen_data.py
+sample_data/*
+!sample_data/.gitkeep
+!sample_data/small/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
