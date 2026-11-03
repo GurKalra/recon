@@ -1,0 +1,212 @@
+{
+  "generator_version": 1,
+  "tolerance_paise": 1000,
+  "receipt_wait_days": 7,
+  "pg_fee_bps": 200,
+  "partners": [
+    {
+      "code": "WEB",
+      "name": "Brand Website (payment gateway)",
+      "type": "website",
+      "payout_sla_days": 2,
+      "claim_window_days": 30
+    },
+    {
+      "code": "M1",
+      "name": "Marketplace One",
+      "type": "marketplace",
+      "payout_sla_days": 7,
+      "claim_window_days": 90
+    },
+    {
+      "code": "M2",
+      "name": "Marketplace Two",
+      "type": "marketplace",
+      "payout_sla_days": 10,
+      "claim_window_days": 45
+    },
+    {
+      "code": "M3",
+      "name": "Marketplace Three",
+      "type": "marketplace",
+      "payout_sla_days": 14,
+      "claim_window_days": 60
+    },
+    {
+      "code": "Q1",
+      "name": "QuickMart",
+      "type": "quick_commerce",
+      "payout_sla_days": 7,
+      "claim_window_days": 30
+    },
+    {
+      "code": "Q2",
+      "name": "Dash Express",
+      "type": "quick_commerce",
+      "payout_sla_days": 7,
+      "claim_window_days": 30
+    },
+    {
+      "code": "CA",
+      "name": "Courier Aggregator A",
+      "type": "courier",
+      "payout_sla_days": 7,
+      "claim_window_days": 15
+    },
+    {
+      "code": "CB",
+      "name": "Courier Aggregator B",
+      "type": "courier",
+      "payout_sla_days": 10,
+      "claim_window_days": 15
+    }
+  ],
+  "channel_cards": {
+    "M1": {
+      "commission_bps": 1200,
+      "fixed_paise": 2000,
+      "ship_slabs": [
+        [
+          500,
+          4500
+        ],
+        [
+          1000,
+          7000
+        ],
+        [
+          2000,
+          11000
+        ]
+      ],
+      "ship_extra_per_kg_paise": 4000,
+      "tcs_bps": 50,
+      "tds_bps": 10
+    },
+    "M2": {
+      "commission_bps": 1000,
+      "fixed_paise": 1500,
+      "ship_slabs": [
+        [
+          500,
+          4000
+        ],
+        [
+          1000,
+          6500
+        ],
+        [
+          2000,
+          10000
+        ]
+      ],
+      "ship_extra_per_kg_paise": 3500,
+      "tcs_bps": 50,
+      "tds_bps": 10
+    },
+    "M3": {
+      "commission_bps": 1400,
+      "fixed_paise": 2500,
+      "ship_slabs": [
+        [
+          500,
+          5000
+        ],
+        [
+          1000,
+          7500
+        ],
+        [
+          2000,
+          12000
+        ]
+      ],
+      "ship_extra_per_kg_paise": 4500,
+      "tcs_bps": 50,
+      "tds_bps": 10
+    },
+    "Q1": {
+      "commission_bps": 1800,
+      "fixed_paise": 0,
+      "ship_slabs": [],
+      "ship_extra_per_kg_paise": 0,
+      "tcs_bps": 50,
+      "tds_bps": 10
+    },
+    "Q2": {
+      "commission_bps": 2000,
+      "fixed_paise": 0,
+      "ship_slabs": [],
+      "ship_extra_per_kg_paise": 0,
+      "tcs_bps": 50,
+      "tds_bps": 10
+    }
+  },
+  "courier_cards": {
+    "CA": {
+      "base": {
+        "A": 4000,
+        "B": 4800,
+        "C": 5600,
+        "D": 7000
+      },
+      "addl": {
+        "A": 3000,
+        "B": 3800,
+        "C": 4600,
+        "D": 6000
+      },
+      "cod_flat": 3000,
+      "cod_bps": 200,
+      "return_pct": 100
+    },
+    "CB": {
+      "base": {
+        "A": 3600,
+        "B": 4500,
+        "C": 5400,
+        "D": 6800
+      },
+      "addl": {
+        "A": 2800,
+        "B": 3500,
+        "C": 4300,
+        "D": 5600
+      },
+      "cod_flat": 2800,
+      "cod_bps": 150,
+      "return_pct": 80
+    }
+  },
+  "zone_rules": {
+    "A": {
+      "pincode_prefixes": [
+        "560"
+      ]
+    },
+    "B": {
+      "pincode_prefixes": [
+        "56",
+        "57",
+        "58",
+        "59"
+      ]
+    },
+    "C": {
+      "pincode_prefixes": [
+        "11",
+        "40",
+        "41",
+        "60",
+        "70",
+        "50",
+        "38",
+        "30"
+      ]
+    },
+    "D": {
+      "pincode_prefixes": []
+    }
+  },
+  "volumetric_divisor": 5000
+}
