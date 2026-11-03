@@ -4,6 +4,7 @@
     python -m app.demo load ../sample_data/xl --reset       # wipe first (benchmark runs)
     python -m app.demo reset                                # wipe all imported data
     python -m app.demo recon --as-of 2026-11-12             # runs the rule engine
+    python -m app.demo review                               # build the review queue
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from psycopg.rows import dict_row
 from app.config import get_settings
 from app.ingest.catalog import LOAD_ORDER
 from app.ingest.pipeline import import_file
+from app.recon import matching
 from app.recon.engine import run_reconciliation
 from app.seed import seed
 
@@ -80,12 +82,26 @@ def main() -> int:
     load_p = sub.add_parser("load", help="seed and import every file in a sample data folder")
     load_p.add_argument("dir", type=Path)
     load_p.add_argument("--reset", action="store_true", help="wipe imported data first")
+    sub.add_parser("review", help="find payments with no order ID and suggest their orders")
     recon_p = sub.add_parser("recon", help="run the reconciliation rules engine")
     recon_p.add_argument("--as-of", type=date.fromisoformat, default=None,
                          help="judge overdue-ness as of this date (default: today)")
     sub.add_parser("reset", help="wipe all imported data (keeps users)")
     args = ap.parse_args()
     with psycopg.connect(get_settings().database_url, row_factory=dict_row) as conn:
+        if args.cmd == "review":
+            start = time.perf_counter()
+            stats = matching.refresh(conn)
+            print(f"{stats['groups_open']} payments need review, {stats['suggestions']} "
+                  f"suggestions ({time.perf_counter() - start:.2f}s)")
+            for grp in matching.queue(conn, limit=10):
+                best = grp["suggestions"][0] if grp["suggestions"] else None
+                label = (f"{best['order_ref_raw']} ({best['confidence']}, {best['score']})"
+                         if best else "no candidate")
+                print(f"  {grp['partner_code']:<4}{grp['occurred_on']}  "
+                      f"₹{(grp['sale_paise'] or 0) / 100:>10,.2f}  -> {label}")
+            return 0
+        
         if args.cmd == "recon":
             r = run_reconciliation(conn, args.as_of or date.today())
             print(f"run {r.run_id} as of {r.as_of}: {r.orders} orders in "
@@ -96,6 +112,7 @@ def main() -> int:
                   f"resolved {r.findings_resolved}); money at risk "
                   f"₹{r.money_at_risk_paise / 100:,.2f}")
             return 0
+        
         if args.cmd == "reset":
             reset(conn)
             print("Imported data wiped.")
