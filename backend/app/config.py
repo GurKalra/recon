@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     db_pool_min: int = 1
     db_pool_max: int = 10
     cors_origins: list[str] = ["http://localhost:5173"]
+    cookie_name: str = "recon_session"
 
     # AI features. Everything works without a key: the rules-only path is used instead.
     groq_api_key: str = ""

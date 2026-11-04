@@ -4,3 +4,5 @@ psycopg[binary,pool]==3.3.6
 pydantic-settings==2.16.2
 polars==2.1.0
 fastexcel==0.21.0
+argon2-cffi==25.1.0
+python-multipart==0.0.33
