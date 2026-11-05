@@ -72,7 +72,9 @@ export interface MappingNote {
   confidence: "high" | "medium" | "low";
   reason: string;
 }
+export type AiStatus = "off" | "no_key" | "not_needed" | "used" | "asked_kept" | "unavailable";
 export interface Suggestion {
+  ai_status: AiStatus;
   mapping: Obj;
   produced_by: string;
   check: {

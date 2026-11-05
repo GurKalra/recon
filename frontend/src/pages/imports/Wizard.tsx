@@ -61,6 +61,17 @@ function cell(c: string, v: unknown): string {
   if (c.endsWith("_on") && typeof v === "string") return date(v);
   return String(v);
 }
+const AI_LINE: Record<string, string> = {
+  off: "The AI was switched off, so the rules worked this out.",
+  no_key: "The AI is not set up on the server (no GROQ_API_KEY), so the rules worked this out.",
+  not_needed: "The rules mapped every column and the arithmetic of the file checked out, so the AI was not needed.",
+  asked_kept: "The AI was asked as well, but the rules' answer was as good or better, so it was kept.",
+  unavailable: "The AI service did not answer, so this comes from the rules.",
+};
+const aiLine = (s: Suggestion) =>
+  s.ai_status === "used"
+    ? `Suggested by the AI (${s.model ?? "model"}, ${int(s.tokens)} tokens), then checked by the rules.`
+    : AI_LINE[s.ai_status] ?? "Suggested by the rules.";
 const mb = (b: number) =>
   b >= 1 << 20
     ? `${(b / (1 << 20)).toFixed(1)} MB`
@@ -282,6 +293,9 @@ export function Wizard({
 
         {step === 1 && (
           <div className="reveal space-y-6">
+            <p className="max-w-[70ch] text-[0.98rem]">
+              Each partner names its columns differently. Here you tell the app which column of this file is the order ID, which is the amount, which is the date, and so on. The app makes a first guess, you fix anything wrong, and it then tests the guess on the real rows. Nothing is saved until you approve it on the next step.
+            </p>
             <div className="grid grid-cols-3 gap-6">
               <label className="text-[0.85rem] text-muted">
                 Partner
@@ -401,11 +415,7 @@ export function Wizard({
               <div className="reveal space-y-5">
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
                   <h3 className="text-[1.15rem]">Check the columns</h3>
-                  <span className="text-[0.88rem] text-muted">
-                    {sugg.produced_by.startsWith("llm")
-                      ? `Suggested by the AI (${sugg.model ?? "model"}, ${int(sugg.tokens)} tokens), checked by the rules`
-                      : "Suggested by the rules"}
-                  </span>
+                  <span className="max-w-[48ch] text-right text-[0.88rem] text-muted">{aiLine(sugg)}</span>
                 </div>
                 {sugg.warnings.map((w) => (
                   <div

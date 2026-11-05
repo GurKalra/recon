@@ -93,8 +93,24 @@ def profile_summary(p: FileProfile) -> dict:
     }
 
 
-def suggestion_dict(s: Suggestion) -> dict:
+def ai_status(use_ai: bool, source: str, attempts: list[str]) -> str:
+    """Why the answer came from the AI or from the rules, in one word the screen can explain."""
+    if not use_ai:
+        return "off"
+    if any(a.startswith("no API key") for a in attempts):
+        return "no_key"
+    if any(a.startswith("model unavailable") for a in attempts):
+        return "unavailable"
+    if source.startswith("llm"):
+        return "used"
+    if any(a.startswith("model round") for a in attempts):
+        return "asked_kept"
+    return "not_needed"
+
+
+def suggestion_dict(s: Suggestion, use_ai: bool = True) -> dict:
     return {
+        "ai_status": ai_status(use_ai, s.source, s.attempts),
         "mapping": s.spec, "produced_by": s.source,
         "check": {"ok": s.check.ok, "errors": s.check.errors, "rows_checked": s.check.rows,
                   "rows_rejected": s.check.rejects},
@@ -114,7 +130,7 @@ def suggest(conn: Connection, path: Path, partner_id: int, source_kind: str,
                 known_refs=known_refs(conn) if source_kind != "orders" else None)
     s = suggest_mapping(path, hint, use_llm=use_ai, partner_types=partner_types(conn),
                         extra_examples=approved_examples(conn))
-    return suggestion_dict(s)
+    return suggestion_dict(s, use_ai)
 
 
 # ---- preview -----------------------------------------------------------------------------------
