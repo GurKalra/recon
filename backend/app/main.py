@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
@@ -26,6 +28,7 @@ from app.claims import ClaimError
 from app.config import get_settings
 from app.db import create_pool, get_conn
 from app.importer import ImportRunner, mark_interrupted
+from app.seed import ensure_partners
 
 
 @asynccontextmanager
@@ -36,6 +39,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pool = pool
     with pool.connection() as conn:
         mark_interrupted(conn)
+        try:
+            ensure_partners(conn, Path(settings.sample_data_dir))
+        except Exception:   # a convenience for new installs; never stop the server over it
+            logging.getLogger("recon").exception("could not add the starting partners")
     app.state.imports = ImportRunner(pool)
     try:
         yield

@@ -40,14 +40,22 @@ export async function api<T>(
         .join("&")
     : "";
   const headers: Record<string, string> = {};
-  if (opts.body !== undefined) headers["Content-Type"] = "application/json";
+  const isForm =
+    typeof FormData !== "undefined" && opts.body instanceof FormData;
+  if (opts.body !== undefined && !isForm)
+    headers["Content-Type"] = "application/json";
   if (UNSAFE.has(method) && csrf) headers["X-CSRF-Token"] = csrf;
 
   const res = await fetch(`/api${path}${qs ? `?${qs}` : ""}`, {
     method,
     headers,
     credentials: "same-origin",
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body:
+      opts.body === undefined
+        ? undefined
+        : isForm
+          ? (opts.body as FormData)
+          : JSON.stringify(opts.body),
     signal: opts.signal,
   });
 

@@ -183,3 +183,54 @@ body {
 .reveal {
   animation: rise 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
+
+/* ---- AI activity ---------------------------------------------------------------------------- */
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(340%); }
+}
+@keyframes dot {
+  0%, 80%, 100% { opacity: 0.2; }
+  40% { opacity: 1; }
+}
+@keyframes flash {
+  from { background-color: #dbe5f1; }
+  to { background-color: transparent; }
+}
+@keyframes ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  80%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* A flat block sliding along a track: "working", with no claim about how far along. */
+.sweep > span {
+  display: block;
+  width: 30%;
+  height: 100%;
+  background: var(--color-accent);
+  animation: sweep 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+.dots > span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 3px;
+  background: currentColor;
+  animation: dot 1.2s infinite;
+}
+.dots > span:nth-child(2) { animation-delay: 0.2s; }
+.dots > span:nth-child(3) { animation-delay: 0.4s; }
+
+/* A card whose AI opinion just arrived. */
+.ai-flash {
+  animation: flash 2.6s ease-out 1;
+}
+/* The sidebar's live dot. */
+.ping::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--color-accent);
+  border-radius: 9999px;
+  animation: ping 1.4s ease-out infinite;
+}

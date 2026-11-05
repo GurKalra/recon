@@ -14,13 +14,7 @@ from app.ingest.reader import read_table
 _EFFECTIVE_FROM = "2000-01-01"  # the demo cards have always been in force
 
 
-def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
-    """Create partners (from rate_cards.json), the 12 sources and their approved mappings.
-
-    Returns {filename: source_id}. The mapping's header fingerprint comes from the sample file,
-    exactly as it would when a finance executive approves a mapping on a real file.
-    """
-    cards = json.loads((data_dir / "rate_cards.json").read_text(encoding="utf-8"))
+def _upsert_partners(conn: Connection, cards: dict) -> None:
     for p in cards["partners"]:
         conn.execute(
             """
@@ -36,6 +30,31 @@ def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
             """,
             {**p, "tol": cards["tolerance_paise"]},
         )
+
+
+def ensure_partners(conn: Connection, data_dir: Path) -> int:
+    """A brand-new install has no partners, so the upload wizard would have nothing to choose.
+    Add the brief's partners (and only them: no orders, rate cards or mappings) when the table is
+    empty. Returns how many were added; 0 when there were already partners or no file to read."""
+    if conn.execute("SELECT count(*) AS n FROM partners").fetchone()["n"]:
+        return 0
+    path = data_dir / "rate_cards.json"
+    if not path.is_file():
+        return 0
+    cards = json.loads(path.read_text(encoding="utf-8"))
+    _upsert_partners(conn, cards)
+    conn.commit()
+    return len(cards["partners"])
+
+
+def seed(conn: Connection, data_dir: Path) -> dict[str, int]:
+    """Create partners (from rate_cards.json), the 12 sources and their approved mappings.
+
+    Returns {filename: source_id}. The mapping's header fingerprint comes from the sample file,
+    exactly as it would when a finance executive approves a mapping on a real file.
+    """
+    cards = json.loads((data_dir / "rate_cards.json").read_text(encoding="utf-8"))
+    _upsert_partners(conn, cards)
     _seed_rate_cards(conn, cards)
     source_ids: dict[str, int] = {}
     for s in SOURCES:

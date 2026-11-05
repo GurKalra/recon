@@ -1,7 +1,9 @@
-import { PageTransition } from "./PageTransition";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { useAi } from "../lib/ai";
 import { ROLE_LABEL, useAuth } from "../lib/auth";
+import { useReviewSummary } from "../lib/queries";
+import { PageTransition } from "./PageTransition";
 import { Button } from "./ui/Button";
 
 const Icon = ({ children }: { children: ReactNode }) => (
@@ -118,6 +120,49 @@ function useCollapsed(): [boolean, () => void] {
   return [collapsed, () => setCollapsed((c) => !c)];
 }
 
+/** What is waiting in the review queue, and whether the AI is working or has just answered. */
+function ReviewBadge({ collapsed }: { collapsed: boolean }) {
+  const ai = useAi();
+  const open = useReviewSummary().data?.by_status.open.payments ?? 0;
+
+  if (ai.status === "running") {
+    return (
+      <span
+        className="relative ml-auto flex h-2.5 w-2.5 shrink-0"
+        title="The AI is reviewing payments"
+        role="status"
+        aria-label="AI is working"
+      >
+        <span className="ping absolute inset-0" />
+        <span className="relative h-2.5 w-2.5 rounded-full bg-accent" />
+      </span>
+    );
+  }
+  if (ai.unseen > 0) {
+    return (
+      <span
+        className={`shrink-0 bg-accent px-1.5 text-[0.75rem] leading-[1.35rem] text-white ${collapsed ? "absolute right-1 top-0.5" : "ml-auto"}`}
+        title={`${ai.unseen} new AI opinions`}
+        role="status"
+        aria-label={`${ai.unseen} new AI opinions`}
+      >
+        {ai.unseen}
+      </span>
+    );
+  }
+  if (open > 0) {
+    return (
+      <span
+        className={`num shrink-0 border border-rule-strong px-1.5 text-[0.75rem] leading-[1.2rem] text-muted ${collapsed ? "absolute right-1 top-0.5 bg-wash" : "ml-auto"}`}
+        title={`${open} payments waiting for a decision`}
+      >
+        {open}
+      </span>
+    );
+  }
+  return null;
+}
+
 export function Shell() {
   const { user, signOut, can } = useAuth();
   const [collapsed, toggle] = useCollapsed();
@@ -166,9 +211,8 @@ export function Shell() {
               to={n.to}
               end={n.to === "/"}
               title={collapsed ? n.label : undefined}
-              aria-label={n.label}
               className={({ isActive }) =>
-                `flex items-center gap-3 border-l-2 px-2.5 py-2 text-[1.02rem] transition-colors ${collapsed ? "justify-center" : ""} ${
+                `relative flex items-center gap-3 border-l-2 px-2.5 py-2 text-[1.02rem] transition-colors ${collapsed ? "justify-center" : ""} ${
                   isActive
                     ? "border-accent font-bold text-accent"
                     : "border-transparent text-muted hover:bg-paper hover:text-ink"
@@ -177,6 +221,7 @@ export function Shell() {
             >
               {n.icon}
               {!collapsed && <span className="truncate">{n.label}</span>}
+              {n.to === "/review" && <ReviewBadge collapsed={collapsed} />}
             </NavLink>
           ))}
         </nav>
