@@ -1,3 +1,5 @@
+import { toast } from "sonner";
+import { successMessage, worthAToast } from "./toasts";
 /** Thin fetch wrapper. The session is an httpOnly cookie; the CSRF token lives only in memory. */
 
 let csrf: string | null = null;
@@ -20,7 +22,7 @@ const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 type Query = Record<string, string | number | boolean | undefined | null>;
 
-export async function api<T>(
+async function request<T>(
   path: string,
   opts: {
     method?: string;
@@ -78,4 +80,33 @@ export async function api<T>(
     throw new ApiError(res.status, msg, d);
   }
   return data as T;
+}
+
+/** Every call goes through here so a change can confirm itself and a real failure can say so. */
+export async function api<T>(
+  path: string,
+  opts: Parameters<typeof request>[1] = {},
+): Promise<T> {
+  const method = opts.method ?? "GET";
+  try {
+    const out = await request<T>(path, opts);
+    const ok = successMessage(method, path);
+    if (ok) toast.success(ok);
+    return out;
+  } catch (e) {
+    const status = e instanceof ApiError ? e.status : null;
+    const message = e instanceof Error ? e.message : "";
+    if (
+      UNSAFE.has(method) &&
+      !(e instanceof DOMException) &&
+      worthAToast(status, message)
+    ) {
+      toast.error(
+        e instanceof ApiError
+          ? message
+          : "Could not reach the server. Check your connection and try again.",
+      );
+    }
+    throw e;
+  }
 }

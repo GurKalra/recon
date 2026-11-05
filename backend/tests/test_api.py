@@ -391,3 +391,25 @@ def test_the_cors_policy_names_the_allowed_origin_only(server):
     evil = server.options("/api/dashboard", headers={
         "Origin": "http://evil.example", "Access-Control-Request-Method": "GET"})
     assert "access-control-allow-origin" not in evil.headers
+
+def test_the_orders_export_matches_the_table_and_is_logged(server):
+    import csv as csv_mod
+    import io
+    server.cookies.clear()
+    assert server.get("/api/orders/export.csv").status_code in (401, 403)
+    sign_in(server, EXEC)
+    res = server.get("/api/orders/export.csv", params={"payment_mode": "cod"})
+    assert res.status_code == 200 and res.headers["content-type"].startswith("text/csv")
+    assert "attachment" in res.headers["content-disposition"]
+    rows = list(csv_mod.reader(io.StringIO(res.content.decode("utf-8-sig"))))
+    table = server.get("/api/orders", params={"payment_mode": "cod", "limit": 1}).json()
+    assert len(rows) - 1 == table["total"] > 0
+    assert rows[0] == ["order_ref", "ordered_on", "channel", "courier", "payment_mode",
+                       "order_value", "delivery_status", "status", "expected", "received",
+                       "variance", "open_findings"]
+    assert {r[4] for r in rows[1:]} == {"cod"}
+    everything = server.get("/api/orders/export.csv").content.decode("utf-8-sig")
+    assert len(everything.splitlines()) == 3001
+    sign_in(server, COFOUNDER)
+    log = server.get("/api/audit", params={"action": "orders.export"}).json()
+    assert log and log[0]["detail"]["rows"] == 3000

@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from app import audit, dashboard
-from app.api.deps import Anyone, AsOf, Cofounder, Conn
+from app.api.deps import Anyone, AsOf, Cofounder, Conn, client_ip
+from app.claim_evidence import csv_bytes
 
 router = APIRouter(prefix="/api", tags=["data"])
 
@@ -62,6 +63,32 @@ def get_returns(
     offset: Annotated[int, Query(ge=0, le=10_000_000)] = 0,
 ) -> dict:
     return dashboard.returns_tracker(conn, as_of, state=state, limit=limit, offset=offset)
+
+
+@router.get("/orders/export.csv")
+def export_orders(
+    request: Request, conn: Conn, user: Anyone, as_of: AsOf,
+    status: str | None = None, partner_id: int | None = None,
+    risk_partner_id: int | None = None,
+    age: Annotated[str | None, Query(pattern=r"^(0-7|8-15|16-30|31-60|60\+)$")] = None,
+    payment_mode: Annotated[str | None, Query(pattern="^(prepaid|cod)$")] = None,
+    q: Annotated[str | None, Query(max_length=60)] = None,
+    date_from: date | None = None, date_to: date | None = None,
+    problems_only: bool = False,
+) -> Response:
+    """The orders the table is showing, as a CSV. No customer details, spreadsheet-safe."""
+    rows, cut = dashboard.orders_export(
+        conn, status=status, partner_id=partner_id, payment_mode=payment_mode, search=q,
+        date_from=date_from, date_to=date_to, problems_only=problems_only,
+        risk_partner_id=risk_partner_id, age=age, as_of=as_of)
+    audit.record(conn, user["id"], "orders.export", "orders", None,
+                 {"rows": len(rows), "cut_short": cut, "status": status,
+                  "payment_mode": payment_mode, "from": str(date_from) if date_from else None,
+                  "to": str(date_to) if date_to else None, "search": q}, client_ip(request))
+    return Response(csv_bytes(dashboard.EXPORT_HEADER, rows), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="orders.csv"',
+                             "Cache-Control": "no-store",
+                             **({"X-Export-Cut-Short": "1"} if cut else {})})
 
 
 @router.get("/orders/{order_id}")

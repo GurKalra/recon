@@ -1,3 +1,4 @@
+import { activePreset, presets } from "../lib/dates";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { StatusBadge } from "../components/ui/Badge";
@@ -142,6 +143,20 @@ function OrdersTab({ sp, set }: TabProps) {
   const total = q.data?.total ?? 0;
   const rows = q.data?.rows ?? [];
   const last = Math.max(0, Math.ceil(total / PAGE) - 1);
+  const exportQuery = new URLSearchParams(
+    Object.entries({
+      q: sp.get("q") ?? "",
+      status,
+      payment_mode: mode,
+      date_from: from,
+      date_to: to,
+      problems_only: open ? "true" : "",
+      age,
+      partner_id: !owes && pid ? String(pid) : "",
+      risk_partner_id: owes && pid ? String(pid) : "",
+    }).filter(([, v]) => v),
+  ).toString();
+  const on = activePreset(from, to, new Date());
 
   return (
     <>
@@ -225,6 +240,34 @@ function OrdersTab({ sp, set }: TabProps) {
             ))}
           </select>
         </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.9rem]">
+        <span className="text-muted">Quick range</span>
+        {presets(new Date()).map((r) => (
+          <button
+            key={r.key}
+            aria-pressed={on === r.key}
+            onClick={() => set({ from: r.from, to: r.to })}
+            className={`border px-2.5 py-1 ${on === r.key ? "border-accent bg-accent text-white" : "border-rule-strong hover:bg-wash"}`}
+          >
+            {r.label}
+          </button>
+        ))}
+        {(from || to) && (
+          <button
+            className="text-accent underline underline-offset-4"
+            onClick={() => set({ from: null, to: null })}
+          >
+            Any date
+          </button>
+        )}
+        <a
+          href={`/api/orders/export.csv${exportQuery ? `?${exportQuery}` : ""}`}
+          className="ml-auto border border-rule-strong px-3 py-1 hover:bg-wash"
+        >
+          Export CSV
+        </a>
       </div>
 
       {chips.length > 0 && (

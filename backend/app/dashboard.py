@@ -10,6 +10,7 @@ from datetime import date
 
 from psycopg import Connection
 
+from app.claim_evidence import inr
 from app.recon.engine import explain_orders
 
 AGE_BUCKETS = ("0-7", "8-15", "16-30", "31-60", "60+")
@@ -139,18 +140,9 @@ _SORTS = {
 }
 
 
-def orders_list(conn: Connection, status: str | None = None, partner_id: int | None = None,
-                payment_mode: str | None = None, search: str | None = None,
-                date_from: date | None = None, date_to: date | None = None,
-                problems_only: bool = False, sort: str = "variance",
-                limit: int = 50, offset: int = 0, risk_partner_id: int | None = None,
-                age: str | None = None, as_of: date | None = None) -> dict:
-    """One page of orders with their verdict. `search` matches an order reference or AWB."""
-    if sort not in _SORTS:
-        raise ValueError(f"sort must be one of {sorted(_SORTS)}")
-    if age is not None and age not in AGE_BUCKETS:
-        raise ValueError(f"age must be one of {list(AGE_BUCKETS)}")
-    limit = max(1, min(limit, 500))
+def _orders_filter(status, partner_id, payment_mode, search, date_from, date_to,
+                   problems_only, risk_partner_id, age, as_of) -> tuple[str, str, dict]:
+    """The FROM and WHERE shared by the orders table and its CSV export, with their parameters."""
     # The Overview's matrix counts open findings by the partner that owes the money and by how
     # long ago it fell due; these two filters let a cell open exactly the orders behind it.
     where = f"""
@@ -172,11 +164,30 @@ def orders_list(conn: Connection, status: str | None = None, partner_id: int | N
               "dfrom": date_from, "dto": date_to, "q": q, "problems": problems_only,
               "q_ref": None if q is None else "%" + "".join(
                   c for c in q.upper() if c.isalnum()) + "%",
-              "q_raw": q, "limit": limit, "offset": offset, "rp": risk_partner_id, "age": age,
+              "q_raw": q, "rp": risk_partner_id, "age": age,
               "as_of": as_of or date.today()}
     from_ = ("FROM orders o JOIN order_status s ON s.order_id = o.id "
              "JOIN partners ch ON ch.id = o.channel_partner_id "
              "LEFT JOIN partners co ON co.id = o.courier_partner_id")
+    return from_, where, params
+
+
+def orders_list(conn: Connection, status: str | None = None, partner_id: int | None = None,
+                payment_mode: str | None = None, search: str | None = None,
+                date_from: date | None = None, date_to: date | None = None,
+                problems_only: bool = False, sort: str = "variance",
+                limit: int = 50, offset: int = 0, risk_partner_id: int | None = None,
+                age: str | None = None, as_of: date | None = None) -> dict:
+    """One page of orders with their verdict. `search` matches an order reference or AWB."""
+    if sort not in _SORTS:
+        raise ValueError(f"sort must be one of {sorted(_SORTS)}")
+    if age is not None and age not in AGE_BUCKETS:
+        raise ValueError(f"age must be one of {list(AGE_BUCKETS)}")
+    limit = max(1, min(limit, 500))
+    from_, where, params = _orders_filter(
+        status, partner_id, payment_mode, search, date_from, date_to, problems_only,
+        risk_partner_id, age, as_of)
+    params |= {"limit": limit, "offset": offset}
     total = conn.execute(f"SELECT count(*) AS n {from_} {where}", params).fetchone()["n"]
     rows = conn.execute(
         f"""
@@ -263,3 +274,36 @@ def returns_tracker(conn: Connection, as_of: date, state: str | None = None,
     total = sum(counts.values()) if state is None else counts.get(state, 0)
     return {"wait_days": wait, "total": total, "limit": limit, "offset": offset, "rows": rows,
             "counts": {k: counts.get(k, 0) for k in ("waiting", "missing", "received")}}
+
+
+EXPORT_MAX = 200_000
+EXPORT_HEADER = ["order_ref", "ordered_on", "channel", "courier", "payment_mode", "order_value",
+                 "delivery_status", "status", "expected", "received", "variance", "open_findings"]
+
+
+def orders_export(conn: Connection, *, status: str | None = None, partner_id: int | None = None,
+                  payment_mode: str | None = None, search: str | None = None,
+                  date_from: date | None = None, date_to: date | None = None,
+                  problems_only: bool = False, risk_partner_id: int | None = None,
+                  age: str | None = None, as_of: date | None = None) -> tuple[list[list], bool]:
+    """Every order matching the filters, as rows for a CSV, newest first. Customer-level details
+    and partner extras are never included. Returns (rows, cut_short)."""
+    if age is not None and age not in AGE_BUCKETS:
+        raise ValueError(f"age must be one of {list(AGE_BUCKETS)}")
+    from_, where, params = _orders_filter(
+        status, partner_id, payment_mode, search, date_from, date_to, problems_only,
+        risk_partner_id, age, as_of)
+    rows = conn.execute(
+        f"""
+        SELECT o.order_ref_raw, o.ordered_on, ch.code AS channel, co.code AS courier,
+               o.payment_mode, o.value_paise, o.delivery_status, s.status, s.expected_paise,
+               s.received_paise, s.variance_paise,
+               (SELECT count(*) FROM findings f WHERE f.order_id = o.id
+                AND f.status = ANY(ARRAY['open','claimed'])) AS live_findings
+        {from_} {where} ORDER BY o.ordered_on DESC, o.id DESC LIMIT {EXPORT_MAX + 1}""",
+        params).fetchall()
+    cut = len(rows) > EXPORT_MAX
+    return [[r["order_ref_raw"], r["ordered_on"], r["channel"], r["courier"], r["payment_mode"],
+             inr(r["value_paise"]), r["delivery_status"], r["status"], inr(r["expected_paise"]),
+             inr(r["received_paise"]), inr(r["variance_paise"]), r["live_findings"]]
+            for r in rows[:EXPORT_MAX]], cut

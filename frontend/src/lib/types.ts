@@ -251,7 +251,10 @@ export interface ReviewDetail extends ReviewGroup {
 }
 
 export interface ReviewSummary {
-  by_status: Record<"open" | "linked" | "dismissed", { payments: number; value_paise: number }>;
+  by_status: Record<
+    "open" | "linked" | "dismissed",
+    { payments: number; value_paise: number }
+  >;
   open_by_confidence: Record<"high" | "medium" | "low" | "none", number>;
   open_by_ai: Record<"not_asked" | "picked" | "none" | "error", number>;
   recon_stale: boolean;

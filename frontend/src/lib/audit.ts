@@ -29,6 +29,7 @@ export const ACTION_TEXT: Record<string, string> = {
   "mapping.rollback": "Rolled back a column mapping",
   "import.start": "Started an import",
   "rejects.download": "Downloaded rejected rows",
+  "orders.export": "Exported orders to CSV",
   "recon.run": "Ran the reconciliation",
   "review.accept": "Accepted a suggested match",
   "review.reject": "Rejected a suggested match",

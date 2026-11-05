@@ -1,3 +1,4 @@
+import { CommandPalette, OPEN_PALETTE } from "./CommandPalette";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAi } from "../lib/ai";
@@ -173,6 +174,7 @@ export function Shell() {
         gridTemplateColumns: `${collapsed ? "4.5rem" : "14.5rem"} minmax(0,1fr)`,
       }}
     >
+      <CommandPalette />
       <aside className="sticky top-0 flex h-screen flex-col overflow-hidden border-r border-rule bg-wash px-4 py-6">
         <div className="flex items-start justify-between gap-2 px-2">
           {!collapsed && (
@@ -204,7 +206,17 @@ export function Shell() {
             </svg>
           </button>
         </div>
-        <nav aria-label="Main" className="mt-8 flex flex-col gap-0.5">
+        {!collapsed && (
+          <button
+            type="button"
+            onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE))}
+            className="mt-6 flex w-full items-center justify-between border border-rule-strong bg-paper px-3 py-2 text-left text-[0.95rem] text-muted hover:text-ink"
+          >
+            <span>Search or jump</span>
+            <kbd className="text-[0.78rem]">Ctrl K</kbd>
+          </button>
+        )}
+        <nav aria-label="Main" className="mt-4 flex flex-col gap-0.5">
           {NAV.filter((n) => !n.needs || can(n.needs)).map((n) => (
             <NavLink
               key={n.to}
