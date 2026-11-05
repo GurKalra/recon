@@ -137,3 +137,34 @@ def test_the_order_drawer_explains_a_problem_order(world):
                 if w["is_expected"])
     assert short > 0
     assert dash.order_detail(world, 10**9, TODAY) is None
+
+def test_a_matrix_cell_opens_exactly_the_orders_behind_it(world):
+    matrix = dash.risk_matrix(world, TODAY)
+    row = max(matrix["partners"], key=lambda p: p["amount_paise"])
+    bucket = max(row["buckets"], key=lambda b: row["buckets"][b]["amount_paise"])
+    partner_id = world.execute("SELECT id FROM partners WHERE code = %s",
+                               (row["partner_code"],)).fetchone()["id"]
+    page = dash.orders_list(world, risk_partner_id=partner_id, age=bucket, as_of=TODAY, limit=500)
+    wanted = world.execute(
+        "SELECT count(DISTINCT order_id) AS n FROM findings f WHERE f.partner_id = %s "
+        "AND f.status = ANY(ARRAY['open','claimed']) AND "
+        "CASE WHEN %s - f.since_on <= 7 THEN '0-7' WHEN %s - f.since_on <= 15 THEN '8-15' "
+        "WHEN %s - f.since_on <= 30 THEN '16-30' WHEN %s - f.since_on <= 60 THEN '31-60' "
+        "ELSE '60+' END = %s", (partner_id, TODAY, TODAY, TODAY, TODAY, bucket)).fetchone()["n"]
+    assert page["total"] == wanted > 0
+    with pytest.raises(ValueError):
+        dash.orders_list(world, age="1-2")
+
+
+def test_the_returns_tracker_agrees_with_the_findings(world):
+    out = dash.returns_tracker(world, TODAY, limit=500)
+    missing = dash.returns_tracker(world, TODAY, state="missing", limit=500)
+    findings = world.execute(
+        "SELECT count(*) AS n FROM findings WHERE type = 'return_not_received' "
+        "AND status = ANY(ARRAY['open','claimed'])").fetchone()["n"]
+    assert out["wait_days"] > 0 and missing["total"] == out["counts"]["missing"]
+    assert missing["total"] == findings
+    assert all(r["state"] == "missing" and r["received_on"] is None for r in missing["rows"])
+    assert sum(out["counts"].values()) == out["total"]
+    with pytest.raises(ValueError):
+        dash.returns_tracker(world, TODAY, state="lost")

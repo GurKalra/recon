@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* One restrained palette, one typeface, no gradients and no shadows: structure comes from thin
+   rules, spacing and weight. Red, amber and green mean money at risk, a deadline, or all clear,
+   and are used for nothing else. */
+@theme {
+  --font-sans: "Times New Roman", Times, "Liberation Serif", serif;
+  --color-paper: #ffffff;
+  --color-wash: #f7f6f2;
+  --color-ink: #161616;
+  --color-muted: #55554f;
+  --color-faint: #86867f;
+  --color-rule: #e3e2dc;
+  --color-rule-strong: #c9c8c0;
+  --color-accent: #1f3a5f;
+  --color-risk: #a8281c;
+  --color-warn: #96590a;
+  --color-ok: #1d6b3a;
+}
+
+html {
+  font-size: 17px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-rule-strong) transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #dbe5f1;
+}
+
+/* Money and counts line up in columns. */
+.num {
+  font-variant-numeric: lining-nums tabular-nums;
+}
+
+/* The small label above a number or a section. */
+.eyebrow {
+  font-size: 0.74rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+/* Tables: thin rules, quiet headers, numbers right-aligned by the `.r` class. */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.tbl th {
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  font-weight: 400;
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  border-bottom: 1px solid var(--color-rule-strong);
+  white-space: nowrap;
+}
+.tbl td {
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-rule);
+  vertical-align: baseline;
+}
+.tbl .r {
+  text-align: right;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.tbl tfoot td {
+  border-top: 1px solid var(--color-rule-strong);
+  border-bottom: 0;
+  font-weight: 700;
+}
+.tbl tbody tr:hover td {
+  background: var(--color-wash);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Custom scrollbar: a thin square thumb on a plain track. Firefox uses scrollbar-color above. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-wash);
+  border-left: 1px solid var(--color-rule);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-rule-strong);
+  border: 2px solid var(--color-wash);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-faint);
+}

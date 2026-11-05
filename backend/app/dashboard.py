@@ -143,12 +143,17 @@ def orders_list(conn: Connection, status: str | None = None, partner_id: int | N
                 payment_mode: str | None = None, search: str | None = None,
                 date_from: date | None = None, date_to: date | None = None,
                 problems_only: bool = False, sort: str = "variance",
-                limit: int = 50, offset: int = 0) -> dict:
+                limit: int = 50, offset: int = 0, risk_partner_id: int | None = None,
+                age: str | None = None, as_of: date | None = None) -> dict:
     """One page of orders with their verdict. `search` matches an order reference or AWB."""
     if sort not in _SORTS:
         raise ValueError(f"sort must be one of {sorted(_SORTS)}")
+    if age is not None and age not in AGE_BUCKETS:
+        raise ValueError(f"age must be one of {list(AGE_BUCKETS)}")
     limit = max(1, min(limit, 500))
-    where = """
+    # The Overview's matrix counts open findings by the partner that owes the money and by how
+    # long ago it fell due; these two filters let a cell open exactly the orders behind it.
+    where = f"""
         WHERE (%(status)s::text IS NULL OR s.status = %(status)s)
           AND (%(partner)s::bigint IS NULL OR o.channel_partner_id = %(partner)s)
           AND (%(mode)s::text IS NULL OR o.payment_mode = %(mode)s)
@@ -156,13 +161,19 @@ def orders_list(conn: Connection, status: str | None = None, partner_id: int | N
           AND (%(dto)s::date IS NULL OR o.ordered_on <= %(dto)s)
           AND (%(q)s::text IS NULL OR o.order_ref LIKE %(q_ref)s OR o.awb = %(q_raw)s)
           AND (NOT %(problems)s OR s.status IN ('short_paid', 'unpaid_past_due',
-                   'freight_overcharged', 'return_not_received'))"""
+                   'freight_overcharged', 'return_not_received'))
+          AND (%(rp)s::bigint IS NULL AND %(age)s::text IS NULL OR EXISTS (
+                 SELECT 1 FROM findings f WHERE f.order_id = o.id
+                 AND f.status = ANY(ARRAY['open','claimed'])
+                 AND (%(rp)s::bigint IS NULL OR f.partner_id = %(rp)s)
+                 AND (%(age)s::text IS NULL OR {_AGE_SQL} = %(age)s)))"""
     q = search.strip() if search and search.strip() else None
     params = {"status": status, "partner": partner_id, "mode": payment_mode,
               "dfrom": date_from, "dto": date_to, "q": q, "problems": problems_only,
               "q_ref": None if q is None else "%" + "".join(
                   c for c in q.upper() if c.isalnum()) + "%",
-              "q_raw": q, "limit": limit, "offset": offset}
+              "q_raw": q, "limit": limit, "offset": offset, "rp": risk_partner_id, "age": age,
+              "as_of": as_of or date.today()}
     from_ = ("FROM orders o JOIN order_status s ON s.order_id = o.id "
              "JOIN partners ch ON ch.id = o.channel_partner_id "
              "LEFT JOIN partners co ON co.id = o.courier_partner_id")
@@ -216,3 +227,34 @@ def order_detail(conn: Connection, order_id: int, as_of: date) -> dict | None:
         "ORDER BY received_on", (order_id,)).fetchall()
     return {"order": order, "waterfall": waterfall, "lines": lines, "findings": findings,
             "receipts": receipts}
+
+def returns_tracker(conn: Connection, as_of: date, state: str | None = None,
+                    limit: int = 50, offset: int = 0) -> dict:
+    """Returned orders against warehouse scans. `waiting` is inside the grace period, `missing`
+    is past it with no scan (these become return_not_received findings), `received` has a scan."""
+    if state not in (None, "waiting", "missing", "received"):
+        raise ValueError("state must be waiting, missing or received")
+    limit = max(1, min(limit, 500))
+    wait = int((conn.execute("SELECT value FROM recon_settings WHERE key = 'receipt_wait_days'")
+                .fetchone() or {"value": 7})["value"])
+    base = """
+        FROM orders o JOIN partners ch ON ch.id = o.channel_partner_id
+        LEFT JOIN LATERAL (SELECT min(received_on) AS received_on, min(condition) AS condition
+                           FROM warehouse_receipts w WHERE w.order_id = o.id) r ON true
+        WHERE o.delivery_status IN ('returned', 'rto') AND o.returned_on IS NOT NULL"""
+    state_sql = """, CASE WHEN r.received_on IS NOT NULL THEN 'received'
+                     WHEN o.returned_on + %(wait)s::int <= %(as_of)s THEN 'missing'
+                     ELSE 'waiting' END"""
+    params = {"wait": wait, "as_of": as_of, "state": state, "limit": limit, "offset": offset}
+    inner = f"""SELECT o.id, o.order_ref_raw AS order_ref, ch.code AS channel, o.returned_on,
+                       o.value_paise, r.received_on, r.condition,
+                       %(as_of)s - o.returned_on AS days_since_return {state_sql} AS state {base}"""
+    counts = {r["state"]: r["n"] for r in conn.execute(
+        f"SELECT state, count(*) AS n FROM ({inner}) t GROUP BY state", params).fetchall()}
+    rows = conn.execute(
+        f"""SELECT * FROM ({inner}) t WHERE (%(state)s::text IS NULL OR state = %(state)s)
+            ORDER BY (state = 'missing') DESC, days_since_return DESC, id
+            LIMIT %(limit)s OFFSET %(offset)s""", params).fetchall()
+    total = sum(counts.values()) if state is None else counts.get(state, 0)
+    return {"wait_days": wait, "total": total, "limit": limit, "offset": offset, "rows": rows,
+            "counts": {k: counts.get(k, 0) for k in ("waiting", "missing", "received")}}

@@ -36,8 +36,10 @@ def get_partners(conn: Conn, _: Anyone) -> list[dict]:
 
 @router.get("/orders")
 def get_orders(
-    conn: Conn, _: Anyone,
+    conn: Conn, _: Anyone, as_of: AsOf,
     status: str | None = None, partner_id: int | None = None,
+    risk_partner_id: int | None = None,
+    age: Annotated[str | None, Query(pattern=r"^(0-7|8-15|16-30|31-60|60\+)$")] = None,
     payment_mode: Annotated[str | None, Query(pattern="^(prepaid|cod)$")] = None,
     q: Annotated[str | None, Query(max_length=60)] = None,
     date_from: date | None = None, date_to: date | None = None,
@@ -49,7 +51,17 @@ def get_orders(
     return dashboard.orders_list(
         conn, status=status, partner_id=partner_id, payment_mode=payment_mode, search=q,
         date_from=date_from, date_to=date_to, problems_only=problems_only, sort=sort,
-        limit=limit, offset=offset)
+        limit=limit, offset=offset, risk_partner_id=risk_partner_id, age=age, as_of=as_of)
+
+
+@router.get("/returns")
+def get_returns(
+    conn: Conn, _: Anyone, as_of: AsOf,
+    state: Annotated[str | None, Query(pattern="^(waiting|missing|received)$")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    offset: Annotated[int, Query(ge=0, le=10_000_000)] = 0,
+) -> dict:
+    return dashboard.returns_tracker(conn, as_of, state=state, limit=limit, offset=offset)
 
 
 @router.get("/orders/{order_id}")
