@@ -16,8 +16,8 @@ import { Orders } from "./pages/Orders";
 import { Overview } from "./pages/Overview";
 import { Review } from "./pages/Review";
 import { SignIn } from "./pages/SignIn";
-import { Soon } from "./pages/Soon";
 import { Rates } from "./pages/Rates";
+import { Audit } from "./pages/Audit";
 
 const FIRST_RUN = "recon.first-run-seen";
 
@@ -128,17 +128,9 @@ export function App() {
         <Route path="orders" element={<Orders />} />
         <Route path="review" element={<Review />} />
         <Route path="imports" element={<Imports />} />
-        <Route
-          path="claims"
-          element={
-            <Claims />
-          }
-        />
+        <Route path="claims" element={<Claims />} />
         <Route path="rates" element={<Rates />} />
-        <Route
-          path="audit"
-          element={<Soon title="Audit trail" lead="Who did what, and when." />}
-        />
+        <Route path="audit" element={<Audit />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
