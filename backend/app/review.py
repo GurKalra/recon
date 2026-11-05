@@ -59,7 +59,8 @@ def page(conn: Connection, status: str, partner_id: int | None, confidence: str 
     groups = conn.execute(
         """SELECT g.id, g.partner_id, p.code AS partner_code, p.name AS partner_name,
                   g.reference, g.occurred_on, g.n_lines, g.sale_paise, g.net_paise, g.has_refund,
-                  g.status, g.linked_order_id, g.link_method, g.note, g.ai_verdict, g.ai_note
+                  g.status, g.linked_order_id, g.link_method, g.note, g.ai_verdict, g.ai_note,
+                  g.ai_model, g.ai_at
            FROM match_groups g JOIN partners p ON p.id = g.partner_id
            LEFT JOIN match_suggestions top
              ON top.group_id = g.id AND top.rank = 1 AND top.status = 'pending'

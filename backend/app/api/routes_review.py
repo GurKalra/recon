@@ -61,6 +61,7 @@ class RerankBody(BaseModel):
     group_ids: list[int] | None = Field(default=None, max_length=MAX_RERANK)
     limit: int = Field(default=MAX_RERANK, ge=1, le=MAX_RERANK)
     everything: bool = False     # also ask about payments the rules are already confident in
+    redo: bool = False           # ask again about payments the AI has already answered
 
 
 # ---- reading -----------------------------------------------------------------------------------
@@ -146,6 +147,15 @@ def dismiss(group_id: int, body: DismissBody, request: Request, conn: Conn, user
 # ---- asking the AI -----------------------------------------------------------------------------
 
 
+@router.get("/ai-status")
+def ai_status(_: Anyone) -> dict:
+    """Is the AI set up on this server, and with which model? No call is made to the provider
+    and the key is never returned."""
+    llm = make_llm()
+    return {"configured": bool(llm.available), "provider": "Groq",
+            "model": llm.model if llm.available else None}
+
+
 @router.post("/rerank")
 def ask_ai(body: RerankBody, request: Request, conn: Conn, user: Exec) -> dict:
     """Ask the model about up to 10 unsure payments. It adds an opinion beside the rules'
@@ -158,11 +168,12 @@ def ask_ai(body: RerankBody, request: Request, conn: Conn, user: Exec) -> dict:
     if not llm.available:
         raise HTTPException(503, "The AI is not set up on this server (no API key). The rules' "
                                  "ranking still works.")
-    stats = rerank(conn, llm, ids=body.group_ids, everything=body.everything, limit=body.limit)
+    stats = rerank(conn, llm, ids=body.group_ids, everything=body.everything, limit=body.limit,
+                   redo=body.redo)
     audit.record(conn, user["id"], "review.rerank", "match_group", None,
                  {"asked": stats.asked, "agreed": stats.agreed, "other": stats.other,
                   "none": stats.none, "errors": stats.errors, "tokens": stats.tokens},
                  client_ip(request))
     return {"asked": stats.asked, "agreed_with_rules": stats.agreed, "picked_another": stats.other,
             "unsure": stats.none, "errors": stats.errors, "tokens": stats.tokens,
-            "notes": stats.notes}
+            "seconds": stats.seconds, "notes": stats.notes}

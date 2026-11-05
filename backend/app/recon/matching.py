@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from app.recon.history import PartnerHistory, load_history
+
 DATE_WINDOW_DAYS = 21
 FULL_MARKS_DAYS = 3
 W_AMOUNT, W_DATE, W_FEES = 0.50, 0.30, 0.20
@@ -244,8 +246,8 @@ def detect_groups(conn: Connection) -> int:
 
 _CANDIDATES = """
 WITH pairs AS MATERIALIZED (   -- cheap filters first: partner, exact value, date window, unpaid
-    SELECT g.id AS group_id, g.line_ids, o.id AS order_id, o.order_ref_raw, o.order_ref,
-           o.extras AS order_extras, o.value_paise,
+    SELECT g.id AS group_id, g.line_ids, g.has_refund, o.id AS order_id, o.order_ref_raw,
+           o.order_ref, o.extras AS order_extras, o.value_paise,
            o.ordered_on, o.channel_partner_id, ch.tolerance_paise,
            greatest(coalesce(o.weight_g, 0),
                     (coalesce(o.length_cm, 0)::bigint * coalesce(o.width_cm, 0)
@@ -264,7 +266,7 @@ WITH pairs AS MATERIALIZED (   -- cheap filters first: partner, exact value, dat
                         AND e.line_type = 'sale' AND e.dup_seq = 0)
 )
 SELECT p.group_id, p.order_id, p.order_ref_raw, p.order_ref, p.order_extras, p.value_paise,
-       p.days_off, p.due_on,
+       p.days_off, p.due_on, p.channel_partner_id AS partner_id, p.has_refund,
        fc.n_checked, fc.n_ok
 FROM pairs p
 LEFT JOIN LATERAL (
@@ -332,6 +334,20 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
     for rows in per_group.values():
         rows.sort(key=lambda c: (-c["raw"], abs(c["days_off"]), c["order_id"]))
 
+    # With a single candidate nothing else tells us it is the right one, so check it against the
+    # partner's earlier, already paid orders of a similar value: is this timing normal for them?
+    # (Only for these payments, which keeps the extra query small.)
+    lone = {gid: rows[0] for gid, rows in per_group.items()
+            if len(rows) == 1 and not rows[0]["has_refund"]}
+    histories: dict[int, PartnerHistory] = (
+        load_history(conn, {c["partner_id"] for c in lone.values()}) if lone else {})
+    timing: dict[int, dict] = {}
+    for gid, c in lone.items():
+        hist = histories.get(c["partner_id"])
+        found = hist.check(c["value_paise"], c["days_off"]) if hist else None
+        if found:
+            timing[gid] = found
+
     # an order that is the best candidate of several payments is contested
     best_for: dict[int, set[int]] = defaultdict(set)
     for gid, rows in per_group.items():
@@ -339,6 +355,10 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
 
     conn.execute("""DELETE FROM match_suggestions s USING match_groups g
                     WHERE s.group_id = g.id AND g.status = 'open' AND s.status = 'pending'""")
+    # the rebuilt suggestions carry no AI pick, so an earlier AI answer about this payment would
+    # point at nothing: clear it, and the payment can be asked about again
+    conn.execute("""UPDATE match_groups SET ai_verdict = NULL, ai_note = NULL, ai_model = NULL,
+                    ai_at = NULL WHERE status = 'open' AND ai_verdict IS NOT NULL""")
     made = 0
     for gid, rows in per_group.items():
         runner = rows[1]["raw"] if len(rows) > 1 else None
@@ -347,7 +367,13 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
             conf = confidence(c["raw"], runner if rank == 1 else None, contested) \
                 if rank == 1 else ("medium" if c["score"] >= 0.65 else "low")
             why = reasons_for(c["value_paise"], c["days_off"], c["n_ok"], c["n_checked"])
-            why = why[:-1] + c["evidence"].notes + why[-1:]
+            past = timing.get(gid)
+            if past:
+                why = why[:-1] + c["evidence"].notes + [past["text"]] + why[-1:]
+                if not past["typical"] and conf == "high":
+                    conf = "medium"   # a lone candidate with unusual timing deserves a look
+            else:
+                why = why[:-1] + c["evidence"].notes + why[-1:]
             if contested:
                 why.append("Another payment is also best matched to this order")
             conn.execute(
@@ -365,7 +391,8 @@ def suggest(conn: Connection, top_n: int = 3) -> dict[str, int]:
                  Jsonb({"days_off": c["days_off"], "due_on": c["due_on"].isoformat(),
                         "fee_lines_ok": c["n_ok"], "fee_lines_checked": c["n_checked"],
                         "contested": contested, "base_score": c["base"], "raw_score": c["raw"],
-                        "evidence": c["evidence"].detail})))
+                        "evidence": c["evidence"].detail,
+                        **({"history": past} if past else {})})))
             made += 1
     open_groups = conn.execute(
         "SELECT count(*) AS n FROM match_groups WHERE status = 'open'").fetchone()["n"]
@@ -507,7 +534,7 @@ def queue(conn: Connection, status: str = "open", limit: int = 50, offset: int =
         """
         SELECT g.id, g.partner_id, p.code AS partner_code, p.name AS partner_name, g.reference,
                g.occurred_on, g.n_lines, g.sale_paise, g.net_paise, g.status, g.linked_order_id,
-               g.link_method, g.note, g.ai_verdict, g.ai_note
+               g.link_method, g.note, g.ai_verdict, g.ai_note, g.ai_model, g.ai_at
         FROM match_groups g JOIN partners p ON p.id = g.partner_id
         WHERE g.status = %s
         ORDER BY abs(coalesce(g.sale_paise, 0)) DESC, g.id

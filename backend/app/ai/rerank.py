@@ -16,6 +16,8 @@ What the model can and cannot do:
 from __future__ import annotations
 
 import json
+import re
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 
@@ -29,21 +31,32 @@ payment arrived without an order ID. You are given the payment, a numbered list 
 orders, the evidence a rules engine already found, and how earlier payments from this partner
 were reviewed. Answer with ONE JSON object and nothing else:
 {"choice": <candidate number, or null>, "confidence": "high" | "medium" | "low",
- "reason": "<one sentence a finance person would understand>"}
+ "reason": "<one or two plain sentences>"}
 
 Rules:
 - Choose only from the numbered candidates. Choose null if none fits or two fit equally well;
   a wrong confident answer is worse than "null".
-- Every candidate already has exactly the right amount. Decide on the rest: how close the
-  payment date is to the expected payout date, whether the fee lines agree, and what the
-  partner's own columns say. Remarks may hold a piece of the order reference, possibly mistyped.
-  A different city or SKU is evidence against a candidate.
+- Every candidate already has exactly the right amount. Decide on the rest: when the payment
+  arrived compared with the expected payout date, whether the fee lines agree, what the
+  partner's own columns say, and whether the timing is normal for this partner's similar
+  orders. Remarks may hold a piece of the order reference, possibly mistyped. A different city
+  or SKU is evidence against a candidate.
+- With only one candidate, say whether it is plausible. If its timing is unusual for the
+  partner, or nothing else supports it, choose null.
 - Earlier reviewer decisions show what usually holds for this partner.
-- Use only what is written below. Do not invent facts."""
+- Use only what is written below. Do not invent facts.
+
+How to write the reason: a finance person with no technical background will read it.
+- Name orders by their order number (for example "order 01171"), never "candidate 2".
+- Say dates and gaps concretely: "paid on 12 Oct, 1 day after the expected payout date of
+  11 Oct", not "1 day off".
+- Name the single strongest fact first, then at most one more. No jargon, no scores, under
+  35 words."""
 
 
 # the rules' reasons that carry real evidence (the others just repeat numbers sent anyway)
-_EVIDENCE_PREFIXES = ("The remarks", "Same ", "Different ", "Another payment")
+_EVIDENCE_PREFIXES = ("The remarks", "Same ", "Different ", "Another payment",
+                      "Similar orders")
 
 # a simple decision: a short answer and no thinking keeps each call cheap
 ANSWER_TOKENS = 400
@@ -57,7 +70,18 @@ class RerankStats:
     none: int = 0          # the model said none / unsure
     errors: int = 0
     tokens: int = 0
+    seconds: float = 0.0
     notes: list[str] = field(default_factory=list)
+
+
+def _timing_words(days_off: int | None) -> str | None:
+    if days_off is None:
+        return None
+    if days_off == 0:
+        return "paid on the expected payout date"
+    n = abs(days_off)
+    return (f"paid {n} day{'s' if n != 1 else ''} {'after' if days_off > 0 else 'before'} "
+            "the expected payout date")
 
 
 # ---- what the model is shown --------------------------------------------------------------------
@@ -109,8 +133,10 @@ def build_prompt(conn: Connection, group: dict, candidates: list[dict]) -> str:
         feats = s["features"]
         evidence = [r for r in s["reasons"] if r.startswith(_EVIDENCE_PREFIXES)]
         cand_rows.append({
-            "n": i, "order": s["order_ref_raw"],
-            "days_from_expected_payout": feats.get("days_off"),
+            "n": i, "order": s["order_ref_raw"], "order_value": s["value_paise"] / 100,
+            "ordered_on": s["ordered_on"].isoformat(),
+            "expected_payout_date": feats.get("due_on"),
+            "payment_timing": _timing_words(feats.get("days_off")),
             "fee_lines_agreeing": (f"{feats.get('fee_lines_ok')}/"
                                    f"{feats.get('fee_lines_checked')}"),
             "order_columns": {k: mask_text(str(v)) for k, v in (s["order_extras"] or {}).items()},
@@ -124,6 +150,19 @@ def build_prompt(conn: Connection, group: dict, candidates: list[dict]) -> str:
 
 
 # ---- validating and storing the answer -----------------------------------------------------------
+
+
+_CAND_WORDS = re.compile(r"\bcandidates?\s*#?\s*(\d+)\b", re.I)
+
+
+def plain_reason(reason: str, candidates: list[dict]) -> str:
+    """The model sometimes says "candidate 2"; the reviewer sees order numbers, not numbers."""
+    def swap(m: re.Match) -> str:
+        i = int(m.group(1))
+        if 1 <= i <= len(candidates):
+            return f"order {candidates[i - 1]['order_ref_raw']}"
+        return m.group(0)
+    return _CAND_WORDS.sub(swap, reason)
 
 
 def parse_choice(data: dict, n: int) -> tuple[int | None, str, str]:
@@ -162,8 +201,8 @@ def _store_error(conn: Connection, group_id: int, message: str) -> None:
 # ---- the run -------------------------------------------------------------------------------------
 
 
-def _groups_to_ask(conn: Connection, ids: list[int] | None, everything: bool, limit: int
-                   ) -> list[dict]:
+def _groups_to_ask(conn: Connection, ids: list[int] | None, everything: bool, limit: int,
+                   redo: bool = False) -> list[dict]:
     return conn.execute(
         """
         SELECT g.id, g.partner_id, p.name AS partner_name, g.reference, g.occurred_on,
@@ -171,15 +210,16 @@ def _groups_to_ask(conn: Connection, ids: list[int] | None, everything: bool, li
         FROM match_groups g JOIN partners p ON p.id = g.partner_id
         JOIN match_suggestions s ON s.group_id = g.id AND s.rank = 1 AND s.status = 'pending'
         WHERE g.status = 'open' AND (%(ids)s::bigint[] IS NULL OR g.id = ANY(%(ids)s))
-          AND (g.ai_verdict IS NULL OR g.ai_verdict = 'error')
+          AND (%(redo)s OR g.ai_verdict IS NULL OR g.ai_verdict = 'error')
           AND (%(all)s OR s.confidence <> 'high')
         ORDER BY abs(coalesce(g.sale_paise, 0)) DESC, g.id LIMIT %(limit)s
-        """, {"ids": ids, "all": everything, "limit": limit}).fetchall()
+        """, {"ids": ids, "all": everything, "limit": limit, "redo": redo}).fetchall()
 
 
 def _candidates(conn: Connection, group_id: int) -> list[dict]:
     return conn.execute(
-        """SELECT s.id, s.order_id, o.order_ref_raw, o.ordered_on, o.extras AS order_extras,
+        """SELECT s.id, s.order_id, o.order_ref_raw, o.ordered_on, o.value_paise,
+                  o.extras AS order_extras,
                   s.rank, s.score, s.features, s.reasons
            FROM match_suggestions s JOIN orders o ON o.id = s.order_id
            WHERE s.group_id = %s AND s.status = 'pending' ORDER BY s.rank""",
@@ -187,14 +227,15 @@ def _candidates(conn: Connection, group_id: int) -> list[dict]:
 
 
 def rerank(conn: Connection, llm: LLMClient, ids: list[int] | None = None,
-           everything: bool = False, limit: int = 50) -> RerankStats:
+           everything: bool = False, limit: int = 50, redo: bool = False) -> RerankStats:
     """Ask the model about the payments the rules are unsure of (or all, with `everything`).
-    Safe to repeat: payments already answered are skipped."""
+    Safe to repeat: payments already answered are skipped unless `redo` asks again."""
     stats = RerankStats()
+    started = time.perf_counter()
     if not llm.available:
         stats.notes.append("no API key: the model was not asked")
         return stats
-    for group in _groups_to_ask(conn, ids, everything, limit):
+    for group in _groups_to_ask(conn, ids, everything, limit, redo):
         cands = _candidates(conn, group["id"])
         if not cands:
             continue
@@ -215,6 +256,7 @@ def rerank(conn: Connection, llm: LLMClient, ids: list[int] | None = None,
             conn.commit()
             stats.errors += 1
             continue
+        reason = plain_reason(reason, cands)
         _store(conn, group["id"], cands, choice, conf, reason, result.model)
         conn.commit()
         stats.tokens += int(result.usage.get("total_tokens") or 0)
@@ -224,4 +266,5 @@ def rerank(conn: Connection, llm: LLMClient, ids: list[int] | None = None,
             stats.agreed += 1
         else:
             stats.other += 1
+    stats.seconds = round(time.perf_counter() - started, 1)
     return stats

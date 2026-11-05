@@ -180,7 +180,7 @@ def test_the_model_sees_the_evidence_but_not_personal_data(queued):
     assert "<email>" in prompt and "<phone>" in prompt
     assert "asha@example.com" not in prompt and "98765" not in prompt
     for needed in ("PAYMENT", "CANDIDATES", "EARLIER REVIEWS", "evidence",
-                   "days_from_expected_payout"):
+                   "payment_timing"):
         assert needed in prompt
 
 
@@ -197,3 +197,49 @@ def test_what_reviewers_decided_before_is_part_of_the_prompt(queued):
     rr.rerank(queued, fake(lambda u: {"choice": 1, "confidence": "low", "reason": "r"}, seen),
               ids=[second["id"]], everything=True)
     assert "1 were accepted" in seen[0]
+
+# ---- plain reasons -----------------------------------------------------------------------------
+
+
+def test_candidate_numbers_in_a_reason_become_order_numbers():
+    cands = [{"order_ref_raw": "01171"}, {"order_ref_raw": "01188"}]
+    assert rr.plain_reason("Candidate 1 is 1 day off; candidate #2 is 15 days off", cands) == \
+        "order 01171 is 1 day off; order 01188 is 15 days off"
+    assert rr.plain_reason("candidate 9 is odd", cands) == "candidate 9 is odd"
+
+
+def test_the_prompt_says_dates_and_gaps_in_words(queued):
+    seen: list[str] = []
+    rr.rerank(queued, fake(lambda u: {"choice": 1, "reason": "r"}, seen), everything=True)
+    assert "expected_payout_date" in seen[0] and "the expected payout date" in seen[0]
+    assert rr.SYSTEM.count("never \"candidate 2\"") == 1
+
+
+def test_a_lone_candidate_with_unusual_timing_is_not_called_high_confidence(queued, monkeypatch):
+    from app.recon.history import PartnerHistory
+
+    always_on_time = PartnerHistory([(v, 0) for v in range(0, 5_000_000, 100)])
+    monkeypatch.setattr(m, "load_history", lambda conn, ids: {p: always_on_time for p in ids})
+    m.refresh(queued)
+    lone = [x for x in m.queue(queued, limit=1000) if len(x["suggestions"]) == 1]
+    off = [x for x in lone if any("unusual for them" in r for r in x["suggestions"][0]["reasons"])]
+    assert off, "expected at least one lone candidate that is paid on a different day"
+    assert all(x["suggestions"][0]["confidence"] != "high" for x in off)
+
+
+def test_answered_payments_are_skipped_unless_asked_again(queued):
+    llm = fake(lambda u: {"choice": 1, "confidence": "low", "reason": "first"})
+    first = rr.rerank(queued, llm, everything=True)
+    assert first.asked > 0
+    assert rr.rerank(queued, llm, everything=True).asked == 0
+    again = rr.rerank(queued, fake(lambda u: {"choice": 1, "reason": "second"}),
+                      everything=True, redo=True)
+    assert again.asked == first.asked
+    assert {x["ai_note"] for x in m.queue(queued, limit=1000) if x["ai_note"]} == {"second"}
+
+
+def test_rebuilding_suggestions_clears_the_ai_answers_that_no_longer_point_at_anything(queued):
+    rr.rerank(queued, fake(lambda u: {"choice": 1, "reason": "x"}), everything=True)
+    assert any(x["ai_verdict"] for x in m.queue(queued, limit=1000))
+    m.refresh(queued)
+    assert not any(x["ai_verdict"] or x["ai_note"] for x in m.queue(queued, limit=1000))

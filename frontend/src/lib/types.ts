@@ -228,6 +228,8 @@ export interface ReviewGroup {
   note: string | null;
   ai_verdict: string | null;
   ai_note: string | null;
+  ai_model: string | null;
+  ai_at: string | null;
   suggestions: Suggestion[];
 }
 
