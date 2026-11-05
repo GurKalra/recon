@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,11 +49,15 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def import_file(conn: Connection, source_id: int, path: Path,
-                created_by: int | None = None) -> ImportResult:
+def import_file(conn: Connection, source_id: int, path: Path, created_by: int | None = None,
+                *, import_id: int | None = None,
+                on_stage: Callable[[int, str], None] | None = None) -> ImportResult:
     """Import `path` using the source's approved mapping. Never raises for bad DATA: bad rows
     become rejects. A structural problem (missing columns, unreadable file) marks the import
-    failed and loads nothing."""
+    failed and loads nothing.
+
+    `import_id` continues a row already queued by the caller (who has done the duplicate check);
+    `on_stage(import_id, stage)` is told when each stage starts, so a screen can show progress."""
     source = conn.execute(
         "SELECT s.partner_id, p.type AS partner_type FROM sources s "
         "JOIN partners p ON p.id = s.partner_id WHERE s.id = %s", (source_id,)
@@ -68,26 +72,35 @@ def import_file(conn: Connection, source_id: int, path: Path,
         raise ValueError(f"source {source_id} has no approved mapping")
 
     sha, size = _sha256(path), path.stat().st_size
-    existing = conn.execute(
-        "SELECT id, rows_total, rows_loaded, rows_rejected, rows_duplicate FROM imports "
-        "WHERE source_id = %s AND file_sha256 = %s AND status <> 'failed'", (source_id, sha)
-    ).fetchone()
-    if existing:
-        return ImportResult(existing["id"], "duplicate", existing["rows_total"] or 0,
-                            existing["rows_loaded"] or 0, existing["rows_rejected"] or 0,
-                            existing["rows_duplicate"] or 0)
-
-    import_id = conn.execute(
-        "INSERT INTO imports (source_id, mapping_id, filename, file_sha256, file_bytes, status, "
-        "created_by, started_at) VALUES (%s, %s, %s, %s, %s, 'running', %s, now()) RETURNING id",
-        (source_id, approved["id"], path.name, sha, size, created_by),
-    ).fetchone()["id"]
+    if import_id is None:
+        existing = conn.execute(
+            "SELECT id, rows_total, rows_loaded, rows_rejected, rows_duplicate FROM imports "
+            "WHERE source_id = %s AND file_sha256 = %s AND status <> 'failed'", (source_id, sha)
+        ).fetchone()
+        if existing:
+            return ImportResult(existing["id"], "duplicate", existing["rows_total"] or 0,
+                                existing["rows_loaded"] or 0, existing["rows_rejected"] or 0,
+                                existing["rows_duplicate"] or 0)
+        import_id = conn.execute(
+            "INSERT INTO imports (source_id, mapping_id, filename, file_sha256, file_bytes, "
+            "status, created_by, started_at) "
+            "VALUES (%s, %s, %s, %s, %s, 'running', %s, now()) RETURNING id",
+            (source_id, approved["id"], path.name, sha, size, created_by),
+        ).fetchone()["id"]
+    else:
+        conn.execute("UPDATE imports SET status = 'running', mapping_id = %s, started_at = now() "
+                     "WHERE id = %s", (approved["id"], import_id))
     conn.commit()  # the 'running' row must survive a later rollback
+
+    def stage(name: str) -> None:
+        if on_stage:
+            on_stage(import_id, name)
 
     timings: dict[str, float] = {}
     result = ImportResult(import_id, "succeeded", timings=timings)
     try:
         spec = MappingSpec.model_validate(approved["mapping"])
+        stage("read")
         with _timed(timings, "read"):
             table = read_table(path, spec.format, spec.referenced_columns())
         if table.fingerprint != approved["header_fingerprint"]:
@@ -95,12 +108,15 @@ def import_file(conn: Connection, source_id: int, path: Path,
                                     "note": "the partner may have changed their file layout"})
         partner_types = {r["code"]: r["type"] for r in
                          conn.execute("SELECT code, type FROM partners").fetchall()}
+        stage("transform")
         with _timed(timings, "transform"):
             out = transform(table, spec, partner_types)
         result.warnings += out.warnings
+        stage("load")
         with _timed(timings, "load"):
             counts = _load(conn, spec, import_id, source, out.good)
         if spec.kind == "orders":  # settlements that arrived before their orders get linked now
+            stage("link")
             with _timed(timings, "link"):
                 link_counts = load.relink_unlinked(conn)
             if link_counts["ledger_lines_linked"] or link_counts["receipts_linked"]:

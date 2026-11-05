@@ -1,4 +1,4 @@
-"""Application settings, read from environment variables (and an optional .env file)."""
+"""Application settings, read from environment variables."""
 
 from __future__ import annotations
 
@@ -18,7 +18,17 @@ class Settings(BaseSettings):
     db_pool_min: int = 1
     db_pool_max: int = 10
     cors_origins: list[str] = ["http://localhost:5173"]
+    # The session cookie is sent over HTTPS only outside development.
     cookie_name: str = "recon_session"
+    # Uploads: where staged files wait, and the limits that protect the server.
+    upload_dir: str = "/tmp/recon_uploads"
+    max_upload_mb: int = 100
+    max_unzipped_mb: int = 1024        # an .xlsx may not expand beyond this
+    # Addresses of reverse proxies whose X-Forwarded-For header can be believed ("*" = all; only
+    # safe when the proxy is the only way in). Empty = use the connecting address.
+    trusted_proxies: str = ""
+    # AI suggestions each person may ask for per 10 minutes.
+    ai_suggestions_per_10min: int = 10
 
     # AI features. Everything works without a key: the rules-only path is used instead.
     groq_api_key: str = ""
@@ -30,6 +40,7 @@ class Settings(BaseSettings):
     groq_temperature: float = 0.3        # Qwen advises against 0 for reasoning models
     groq_max_tokens: int = 4000          # thinking tokens count towards this
     # Tokens per minute the client may spend (the provider counts the reserved answer too).
+    # Groq's free plan allows about 8000; 0 turns pacing off (for paid plans).
     groq_tpm_limit: int = 7000
     groq_base_url: str = "https://api.groq.com/openai/v1"
     llm_timeout_s: float = 30.0

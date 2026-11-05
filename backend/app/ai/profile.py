@@ -129,7 +129,7 @@ def _classify(name: str, series: pl.Series) -> ColumnProfile:
         prof.kind = "date_dmony"
     elif share(lambda v: bool(_NUMBER.match(v))) >= 0.9:
         prof.kind = "number"
-        nums = [_to_float(v) for v in vals]
+        nums = [x for x in (_to_float(v) for v in vals) if x is not None]
         prof.negative_share = sum(1 for x in nums if x < 0) / len(nums)
         prof.zero_share = sum(1 for x in nums if x == 0) / len(nums)
         prof.integer_only = all(x == int(x) for x in nums) and not any("." in v for v in vals)
@@ -144,9 +144,13 @@ def _classify(name: str, series: pl.Series) -> ColumnProfile:
     return prof
 
 
-def _to_float(v: str) -> float:
+def _to_float(v: str) -> float | None:
+    """The number in a cell, or None for a stray non-number in an otherwise numeric column."""
     neg = v.startswith("(") and v.endswith(")")
-    x = float(re.sub(r"[₹,()\s]", "", v) or 0)
+    try:
+        x = float(re.sub(r"[₹,()\s]", "", v) or 0)
+    except ValueError:
+        return None
     return -abs(x) if neg else x
 
 

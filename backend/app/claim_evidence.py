@@ -56,7 +56,7 @@ def _cell(value: object) -> object:
     return "" if value is None else value.isoformat() if isinstance(value, date) else value
 
 
-def _csv(header: list[str], rows: list[list[object]]) -> bytes:
+def csv_bytes(header: list[str], rows: list[list[object]]) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\r\n")
     writer.writerow(header)
@@ -166,7 +166,7 @@ def evidence_zip(conn: Connection, claim_id: int, as_of: date) -> tuple[str, byt
         raise ClaimError("The claim is empty.")
     order_ids = sorted({i["order_id"] for i in items})
 
-    summary = _csv(
+    summary = csv_bytes(
         ["claim_id", "partner", "partner_reference", "order", "what_is_wrong", "claimed_inr",
          "claimed_paise", "expected_inr", "received_inr", "gap_inr", "owed_since",
          "claim_deadline", "days_left_on_" + as_of.isoformat(), "claim_status"],
@@ -176,7 +176,7 @@ def evidence_zip(conn: Connection, claim_id: int, as_of: date) -> tuple[str, byt
           i["since_on"], i["claim_deadline"], (i["claim_deadline"] - as_of).days, i["outcome"]]
          for i in items])
 
-    orders = _csv(
+    orders = csv_bytes(
         ["order", "channel", "payment_mode", "order_value_inr", "ordered_on", "delivered_on",
          "returned_on", "return_received_at_warehouse_on", "courier", "awb", "pincode"],
         [[i["order_ref_raw"], i["channel"], i["payment_mode"], inr(i["value_paise"]),
@@ -188,7 +188,7 @@ def evidence_zip(conn: Connection, claim_id: int, as_of: date) -> tuple[str, byt
     for start in range(0, len(order_ids), _CHUNK):
         expl += explain_orders(conn, order_ids[start:start + _CHUNK], as_of)
     expl.sort(key=lambda r: (by_ref[r["order_id"]], r["grp"], r["phase"], r["line_type"]))
-    expected = _csv(
+    expected = csv_bytes(
         ["order", "settlement_group", "phase", "line_type", "due_on", "expected_inr",
          "expected_paise", "received_inr", "received_paise", "gap_inr", "lines_received"],
         [[by_ref[r["order_id"]], r["grp"], r["phase"], r["line_type"], r["due_on"],
@@ -197,14 +197,14 @@ def evidence_zip(conn: Connection, claim_id: int, as_of: date) -> tuple[str, byt
           int(r["n_received"])]
          for r in expl])
 
-    received = _csv(
+    received = csv_bytes(
         ["order", "from_partner", "line_type", "amount_inr", "amount_paise", "date", "reference",
          "source_file", "source_row", "repeat_of_an_earlier_line"],
         [[r["order_ref_raw"], r["partner"], r["line_type"], inr(r["amount_paise"]),
           r["amount_paise"], r["occurred_on"], r["reference"], r["filename"], r["source_row"],
           "yes" if r["dup_seq"] else "no"] for r in _lines(conn, order_ids)])
 
-    cards = _csv(["kind", "partner", "card_id", "effective_from", "parameter", "value"],
+    cards = csv_bytes(["kind", "partner", "card_id", "effective_from", "parameter", "value"],
                  _rate_card_rows(conn, order_ids))
 
     files = {"1_summary.csv": summary, "2_orders.csv": orders,
