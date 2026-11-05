@@ -214,9 +214,14 @@ def order_detail(conn: Connection, order_id: int, as_of: date) -> dict | None:
     findings = conn.execute(
         """
         SELECT f.id, f.type, f.amount_paise, f.status, f.since_on, f.claim_deadline,
-               f.recovered_paise, p.code AS partner_code,
-               (f.claim_deadline - %s) AS days_left
+               f.recovered_paise, f.partner_id, p.code AS partner_code, p.name AS partner_name,
+               (f.claim_deadline - %s) AS days_left,
+               ci.id AS item_id, ci.claim_id, ci.outcome AS item_outcome,
+               c.status AS claim_status
         FROM findings f JOIN partners p ON p.id = f.partner_id
+        LEFT JOIN LATERAL (SELECT x.* FROM claim_items x WHERE x.finding_id = f.id
+                           ORDER BY (x.outcome = 'pending') DESC, x.id DESC LIMIT 1) ci ON true
+        LEFT JOIN claims c ON c.id = ci.claim_id
         WHERE f.order_id = %s ORDER BY f.id""", (as_of, order_id)).fetchall()
     for f in findings:
         f["history"] = conn.execute(

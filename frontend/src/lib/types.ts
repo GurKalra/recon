@@ -168,8 +168,14 @@ export interface OrderDetail {
     since_on: string;
     claim_deadline: string | null;
     recovered_paise: number;
+    partner_id: number;
     partner_code: string;
+    partner_name: string;
     days_left: number | null;
+    item_id: number | null;
+    claim_id: number | null;
+    item_outcome: string | null;
+    claim_status: string | null;
     history: { at: string; kind: string; detail: unknown }[];
   }[];
   receipts: { received_on: string; condition: string | null }[];

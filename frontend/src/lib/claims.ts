@@ -105,6 +105,13 @@ export const useClaim = (id: number | null) =>
     enabled: id !== null,
   });
 
+export const useDraftClaims = (partnerId: number, enabled: boolean) =>
+  useQuery({
+    queryKey: ["claims", "drafts", partnerId],
+    queryFn: () => api<ClaimRow[]>("/claims", { query: { status: "draft", partner_id: partnerId, limit: 50 } }),
+    enabled,
+  });
+
 export const useFindingHistory = (id: number, enabled: boolean) =>
   useQuery({
     queryKey: ["claims", "history", id],
@@ -136,6 +143,8 @@ export const claimsApi = {
       method: "POST",
       body: { partner_ref: v.partner_ref || null },
     }),
+  addItems: (v: { claim: number; finding_ids: number[] }) =>
+    api(`/claims/${v.claim}/items`, { method: "POST", body: { finding_ids: v.finding_ids } }),
   discard: (id: number) => api(`/claims/${id}`, { method: "DELETE" }),
   remove: (v: { claim: number; finding: number }) =>
     api(`/claims/${v.claim}/items/${v.finding}`, { method: "DELETE" }),

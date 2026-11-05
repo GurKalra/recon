@@ -3,6 +3,7 @@ import { StatusBadge } from "../components/ui/Badge";
 import { ErrorNote, Skeleton } from "../components/ui/Section";
 import { date, inr, label } from "../lib/format";
 import { useOrder } from "../lib/queries";
+import { FindingActions } from "./claims/FindingActions";
 import type { OrderDetail, WaterfallRow } from "../lib/types";
 
 const TOLERANCE = 1000; // paise: the brief flags gaps over ₹10
@@ -187,10 +188,8 @@ function Findings({ d }: { d: OrderDetail }) {
         {d.findings.map((f) => {
           const closed = f.days_left !== null && f.days_left < 0;
           return (
-            <li
-              key={f.id}
-              className="flex items-start justify-between gap-4 border-b border-rule py-3"
-            >
+            <li key={f.id} className="border-b border-rule py-3">
+              <div className="flex items-start justify-between gap-4">
               <div>
                 <StatusBadge status={f.type} />
                 <div className="mt-0.5 text-[0.88rem] text-muted">
@@ -203,11 +202,13 @@ function Findings({ d }: { d: OrderDetail }) {
                   >
                     {closed
                       ? `Claim window closed ${Math.abs(f.days_left!)} days ago (${date(f.claim_deadline)})`
-                      : `Claim by ${date(f.claim_deadline)} (${f.days_left} days left)`}
+                      : `Claim by ${date(f.claim_deadline)} (${f.days_left} ${f.days_left === 1 ? "day" : "days"} left)`}
                   </div>
                 )}
               </div>
               <div className="num text-[1.1rem]">{inr(f.amount_paise)}</div>
+              </div>
+              <FindingActions f={f} />
             </li>
           );
         })}

@@ -472,3 +472,27 @@ def test_an_empty_or_missing_claim_has_no_pack(world):
     cl.remove_finding(world, claim_id, ids[0])
     with pytest.raises(cl.ClaimError, match="empty"):
         ev.evidence_zip(world, claim_id, TODAY)
+
+# ---- the order drawer can act on a finding -------------------------------------------------------
+
+
+def test_the_order_drawer_says_which_claim_a_finding_is_in(world):
+    from app import dashboard as dash
+    pid, ids = partner_with_findings(world, 2)
+    order_of = {r["id"]: r["order_id"] for r in world.execute(
+        "SELECT id, order_id FROM findings WHERE id = ANY(%s)", (ids[:2],)).fetchall()}
+
+    def mine(fid):
+        d = dash.order_detail(world, order_of[fid], TODAY)
+        return next(f for f in d["findings"] if f["id"] == fid)
+
+    assert mine(ids[0])["claim_id"] is None and mine(ids[0])["partner_id"] == pid
+    claim_id = cl.create_claim(world, pid, [ids[0]])
+    f = mine(ids[0])
+    assert (f["claim_id"], f["claim_status"], f["item_outcome"]) == (claim_id, "draft", "pending")
+    cl.submit_claim(world, claim_id, TODAY)
+    assert mine(ids[0])["claim_status"] == "submitted"
+    item = cl.claim_detail(world, claim_id, TODAY)["items"][0]
+    cl.record_outcome(world, item["id"], "rejected")
+    f = mine(ids[0])
+    assert (f["claim_id"], f["item_outcome"]) == (claim_id, "rejected")
