@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # Addresses of reverse proxies whose X-Forwarded-For header can be believed ("*" = all; only
     # safe when the proxy is the only way in). Empty = use the connecting address.
     trusted_proxies: str = ""
+    # Folder of the built React app. When set, the API serves the website too.
+    web_dist: str = ""
     # AI suggestions each person may ask for per 10 minutes.
     ai_suggestions_per_10min: int = 10
     # Requests to ask the AI about unsure payments (up to 10 payments each) per person.

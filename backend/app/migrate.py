@@ -9,6 +9,7 @@ An advisory lock makes concurrent runs safe; editing an applied migration is ref
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sys
 from pathlib import Path
@@ -70,7 +71,9 @@ def migrate(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
 
 
 def main() -> int:
-    applied = migrate(get_settings().database_url)
+    # Migrations may need more rights than the running app has (it cannot create tables), so a
+    # separate address can be given for them.
+    applied = migrate(os.environ.get("MIGRATE_DATABASE_URL") or get_settings().database_url)
     print(f"Applied: {', '.join(applied)}" if applied else "Database is up to date.")
     return 0
 

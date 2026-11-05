@@ -1,0 +1,7 @@
+# Optional HTTPS in front of the website: docker compose --profile tls up -d
+# Set DOMAIN in .env to a name that points at this server. Caddy gets and renews the certificate.
+{$DOMAIN} {
+    encode gzip
+    reverse_proxy web:80
+    header Strict-Transport-Security "max-age=31536000"
+}

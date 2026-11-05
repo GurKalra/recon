@@ -29,6 +29,7 @@ from app.config import get_settings
 from app.db import create_pool, get_conn
 from app.importer import ImportRunner, mark_interrupted
 from app.seed import ensure_partners
+from app.web import mount_web
 
 
 @asynccontextmanager
@@ -94,3 +95,8 @@ async def claim_error(_: Request, exc: ClaimError) -> JSONResponse:
 def health(conn: Annotated[Connection, Depends(get_conn)]) -> dict[str, object]:
     row = conn.execute("SELECT 1 AS ok").fetchone()
     return {"status": "ok", "db": bool(row and row["ok"] == 1)}
+
+
+# Last, so it only catches paths nothing above matched.
+if _settings.web_dist and (Path(_settings.web_dist) / "index.html").is_file():
+    mount_web(app, Path(_settings.web_dist), hsts=_settings.app_env != "development")
