@@ -10,6 +10,7 @@ import {
 } from "./components/ui/Section";
 import { useAuth } from "./lib/auth";
 import { useDashboard, useDemoStatus, useLoadDemo } from "./lib/queries";
+import { Claims } from "./pages/Claims";
 import { Imports } from "./pages/Imports";
 import { Orders } from "./pages/Orders";
 import { Overview } from "./pages/Overview";
@@ -129,7 +130,7 @@ export function App() {
         <Route
           path="claims"
           element={
-            <Soon title="Claims" lead="Batches per partner with evidence." />
+            <Claims />
           }
         />
         <Route
