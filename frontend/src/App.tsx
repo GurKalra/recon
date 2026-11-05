@@ -17,6 +17,7 @@ import { Overview } from "./pages/Overview";
 import { Review } from "./pages/Review";
 import { SignIn } from "./pages/SignIn";
 import { Soon } from "./pages/Soon";
+import { Rates } from "./pages/Rates";
 
 const FIRST_RUN = "recon.first-run-seen";
 
@@ -133,15 +134,7 @@ export function App() {
             <Claims />
           }
         />
-        <Route
-          path="rates"
-          element={
-            <Soon
-              title="Rate cards"
-              lead="Expected amounts per channel and courier."
-            />
-          }
-        />
+        <Route path="rates" element={<Rates />} />
         <Route
           path="audit"
           element={<Soon title="Audit trail" lead="Who did what, and when." />}
