@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app import audit, claims
+from app import audit, claims, staleness
 from app.api.deps import Anyone, AsOf, Conn, Exec, client_ip
 from app.importer import WORK_LOCK
 from app.recon.engine import run_reconciliation
@@ -27,6 +27,12 @@ def run(request: Request, conn: Conn, user: Exec, as_of: AsOf) -> dict:
                  {"as_of": str(as_of), "orders": result.orders, "synced_claims": synced},
                  client_ip(request))
     return {**asdict(result), "claims": synced}
+
+
+@router.get("/status")
+def status(conn: Conn, _: Anyone) -> dict:
+    """Is the reconciliation out of date, and why (new import, review decision, rate card)?"""
+    return staleness.recon_status(conn)
 
 
 @router.get("/runs")
