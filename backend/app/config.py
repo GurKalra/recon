@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     upload_dir: str = "/tmp/recon_uploads"
     max_upload_mb: int = 100
     max_unzipped_mb: int = 1024        # an .xlsx may not expand beyond this
+    # The folder of sample partner files the demo workspace loads and offers for download.
+    sample_data_dir: str = "../sample_data/small"
     # Addresses of reverse proxies whose X-Forwarded-For header can be believed ("*" = all; only
     # safe when the proxy is the only way in). Empty = use the connecting address.
     trusted_proxies: str = ""

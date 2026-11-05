@@ -16,6 +16,7 @@ from app.api import (
     routes_auth,
     routes_claims,
     routes_data,
+    routes_demo,
     routes_imports,
     routes_rates,
     routes_recon,
@@ -60,7 +61,7 @@ if _settings.trusted_proxies:   # believe X-Forwarded-For only from these proxie
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_settings.trusted_proxies)
 for router in (routes_auth.router, routes_data.router, routes_claims.router,
                routes_imports.router, routes_review.router, routes_rates.router,
-               routes_recon.router):
+               routes_demo.router, routes_recon.router):
     app.include_router(router)
 
 
