@@ -13,6 +13,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.ai.mask import is_sensitive_header
 from app.ingest.normalize import norm_header
 
 LineType = Literal[
@@ -79,10 +80,13 @@ def _check_extras(extras: dict[str, str]) -> dict[str, str]:
     """Optional extra columns kept as-is (SKU, city, remarks...): {key in our data: column}."""
     if len(extras) > MAX_EXTRAS:
         raise ValueError(f"at most {MAX_EXTRAS} extra columns can be kept")
-    for key in extras:
+    for key, column in extras.items():
         if not _EXTRA_KEY.match(key):
             raise ValueError(f"extra column key {key!r} must be lower-case letters, digits "
                              "and underscores")
+        if is_sensitive_header(key) or is_sensitive_header(column):
+            raise ValueError(f"column {column!r} looks like personal data (a name, phone, "
+                             "email, address or account number). It is never stored.")
     return extras
 
 
