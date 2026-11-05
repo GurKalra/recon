@@ -12,7 +12,14 @@ from fastapi.responses import JSONResponse
 from psycopg import Connection
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
-from app.api import routes_auth, routes_claims, routes_data, routes_imports, routes_recon
+from app.api import (
+    routes_auth,
+    routes_claims,
+    routes_data,
+    routes_imports,
+    routes_recon,
+    routes_review,
+)
 from app.claims import ClaimError
 from app.config import get_settings
 from app.db import create_pool, get_conn
@@ -51,7 +58,7 @@ app.add_middleware(
 if _settings.trusted_proxies:   # believe X-Forwarded-For only from these proxies
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_settings.trusted_proxies)
 for router in (routes_auth.router, routes_data.router, routes_claims.router,
-               routes_imports.router, routes_recon.router):
+               routes_imports.router, routes_review.router, routes_recon.router):
     app.include_router(router)
 
 

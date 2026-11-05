@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
     # AI suggestions each person may ask for per 10 minutes.
     ai_suggestions_per_10min: int = 10
+    # Requests to ask the AI about unsure payments (up to 10 payments each) per person.
+    ai_reranks_per_10min: int = 5
 
     # AI features. Everything works without a key: the rules-only path is used instead.
     groq_api_key: str = ""

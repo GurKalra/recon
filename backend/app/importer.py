@@ -17,6 +17,7 @@ from psycopg import Connection
 from psycopg_pool import ConnectionPool
 
 from app.ingest.pipeline import import_file
+from app.recon import matching
 
 log = logging.getLogger("recon.importer")
 
@@ -90,6 +91,15 @@ class ImportRunner:
         except Exception:   # progress is a courtesy; never fail the import over it
             log.exception("could not record progress")
 
+    def _rebuild_review_queue(self, import_id: int) -> None:
+        """New payments without an order ID join the review queue; suggestions are refreshed.
+        The import itself already succeeded, so a problem here is logged, not fatal."""
+        try:
+            with self.pool.connection() as conn:
+                matching.refresh(conn)
+        except Exception:
+            log.exception("could not refresh the review queue after import %s", import_id)
+
     def _run(self, source_id: int, path: Path, user_id: int | None, import_id: int,
              upload_id: int | None) -> None:
         with WORK_LOCK:
@@ -99,6 +109,7 @@ class ImportRunner:
                                          on_stage=self._stage)
                 if result.status == "succeeded":
                     path.unlink(missing_ok=True)
+                    self._rebuild_review_queue(import_id)
                     if upload_id is not None:
                         with self.pool.connection() as conn:
                             conn.execute("UPDATE uploads SET status = 'imported' WHERE id = %s",
