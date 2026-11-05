@@ -113,3 +113,73 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-faint);
 }
+
+/* ---- Motion -------------------------------------------------------------------------------
+   Short, quiet movement that explains what changed: content settles in, bars grow, panels slide.
+   Everything below is switched off by the reduced-motion rule above. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes grow-x {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes slide-in {
+  from { transform: translateX(32px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes slide-out {
+  from { transform: none; opacity: 1; }
+  to { transform: translateX(32px); opacity: 0; }
+}
+
+.page-in {
+  animation: rise 360ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Table rows settle in one after another (the first dozen only). */
+.tbl tbody tr {
+  animation: rise 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tbl tbody tr:nth-child(2) { animation-delay: 25ms; }
+.tbl tbody tr:nth-child(3) { animation-delay: 50ms; }
+.tbl tbody tr:nth-child(4) { animation-delay: 75ms; }
+.tbl tbody tr:nth-child(5) { animation-delay: 100ms; }
+.tbl tbody tr:nth-child(6) { animation-delay: 125ms; }
+.tbl tbody tr:nth-child(7) { animation-delay: 150ms; }
+.tbl tbody tr:nth-child(8) { animation-delay: 175ms; }
+.tbl tbody tr:nth-child(n + 9) { animation-delay: 200ms; }
+.tbl td {
+  transition: background-color 140ms ease;
+}
+
+/* Lists of cards: .stagger on the parent. */
+.stagger > * {
+  animation: rise 380ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.stagger > *:nth-child(2) { animation-delay: 50ms; }
+.stagger > *:nth-child(3) { animation-delay: 100ms; }
+.stagger > *:nth-child(4) { animation-delay: 150ms; }
+.stagger > *:nth-child(n + 5) { animation-delay: 200ms; }
+
+/* The thin bars on the Overview grow from the left. */
+.h-\[6px\] > div {
+  transform-origin: left;
+  animation: grow-x 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 150ms both;
+}
+
+/* Drawer: Radix keeps the element mounted while the closing animation plays. */
+.drawer-overlay[data-state="open"] { animation: fade 200ms ease-out both; }
+.drawer-overlay[data-state="closed"] { animation: fade 160ms ease-in reverse both; }
+.drawer-panel[data-state="open"] { animation: slide-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.drawer-panel[data-state="closed"] { animation: slide-out 180ms ease-in both; }
+
+/* Expanding detail inside a card. */
+.reveal {
+  animation: rise 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}

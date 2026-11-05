@@ -18,10 +18,10 @@ export function Drawer({
   return (
     <Dialog.Root open={open} onOpenChange={(o) => !o && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-ink/30" />
+        <Dialog.Overlay className="drawer-overlay fixed inset-0 z-40 bg-ink/30" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="fixed inset-y-0 right-0 z-50 flex w-[44rem] max-w-full flex-col border-l border-rule-strong bg-paper"
+          className="drawer-panel fixed inset-y-0 right-0 z-50 flex w-[44rem] max-w-full flex-col border-l border-rule-strong bg-paper"
         >
           <header className="flex items-start justify-between gap-4 border-b border-rule px-8 py-6">
             <div className="min-w-0">

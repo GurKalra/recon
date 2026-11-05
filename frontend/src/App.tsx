@@ -4,6 +4,7 @@ import { Skeleton } from "./components/ui/Section";
 import { useAuth } from "./lib/auth";
 import { Orders } from "./pages/Orders";
 import { Overview } from "./pages/Overview";
+import { Review } from "./pages/Review";
 import { SignIn } from "./pages/SignIn";
 import { Soon } from "./pages/Soon";
 
@@ -21,15 +22,7 @@ export function App() {
       <Route element={<Shell />}>
         <Route index element={<Overview />} />
         <Route path="orders" element={<Orders />} />
-        <Route
-          path="review"
-          element={
-            <Soon
-              title="Review queue"
-              lead="Suggested matches that need a person."
-            />
-          }
-        />
+        <Route path="review" element={<Review />} />
         <Route
           path="imports"
           element={

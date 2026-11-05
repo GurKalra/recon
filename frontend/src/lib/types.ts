@@ -191,3 +191,60 @@ export interface ReturnsPage extends Page<ReturnRow> {
   wait_days: number;
   counts: Record<"waiting" | "missing" | "received", number>;
 }
+
+export interface Suggestion {
+  id: number;
+  group_id: number;
+  order_id: number;
+  order_ref_raw: string;
+  value_paise: number;
+  ordered_on: string;
+  delivery_status: string;
+  payment_mode: "prepaid" | "cod";
+  rank: number;
+  score: string;
+  confidence: "high" | "medium" | "low" | "none";
+  reasons: string[];
+  status: string;
+  ai_pick: boolean | null;
+  ai_confidence: string | null;
+  ai_reason: string | null;
+}
+
+export interface ReviewGroup {
+  id: number;
+  partner_id: number;
+  partner_code: string;
+  partner_name: string;
+  reference: string | null;
+  occurred_on: string;
+  n_lines: number;
+  sale_paise: number;
+  net_paise: number;
+  has_refund: boolean;
+  status: "open" | "linked" | "dismissed";
+  linked_order_id: number | null;
+  link_method: string | null;
+  note: string | null;
+  ai_verdict: string | null;
+  ai_note: string | null;
+  suggestions: Suggestion[];
+}
+
+export interface ReviewDetail extends ReviewGroup {
+  lines: {
+    id: number;
+    line_type: string;
+    amount_paise: number;
+    occurred_on: string;
+    reference: string | null;
+    extras: Record<string, unknown>;
+  }[];
+}
+
+export interface ReviewSummary {
+  by_status: Record<"open" | "linked" | "dismissed", { payments: number; value_paise: number }>;
+  open_by_confidence: Record<"high" | "medium" | "low" | "none", number>;
+  open_by_ai: Record<"not_asked" | "picked" | "none" | "error", number>;
+  recon_stale: boolean;
+}

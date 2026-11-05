@@ -1,3 +1,4 @@
+import { PageTransition } from "./PageTransition";
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { ROLE_LABEL, useAuth } from "../lib/auth";
@@ -200,7 +201,9 @@ export function Shell() {
       </aside>
       <main className="min-w-0 px-12 pb-20 pt-9">
         <div className="mx-auto max-w-[1180px]">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </div>
       </main>
     </div>

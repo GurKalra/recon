@@ -82,3 +82,39 @@ export function useReturns(query: Record<string, string | number | undefined>) {
     placeholderData: keepPreviousData,
   });
 }
+
+import type { ReviewDetail, ReviewGroup, ReviewSummary } from "./types";
+
+export const useReviewSummary = () =>
+  useQuery({ queryKey: ["review", "summary"], queryFn: () => api<ReviewSummary>("/review/summary") });
+
+export function useReviewQueue(query: Record<string, string | number | undefined>) {
+  return useQuery({
+    queryKey: ["review", "queue", query],
+    queryFn: () => api<{ total: number; rows: ReviewGroup[] }>("/review/queue", { query }),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export const useReviewDetail = (id: number, enabled: boolean) =>
+  useQuery({
+    queryKey: ["review", "group", id],
+    queryFn: () => api<ReviewDetail>(`/review/groups/${id}`),
+    enabled,
+  });
+
+/** Every decision changes what other screens show, so refresh them all. */
+export function useReviewAction<V = void>(call: (v: V) => Promise<unknown>) {
+  const refresh = useRefreshAll();
+  return useMutation({ mutationFn: call, onSuccess: refresh });
+}
+
+export const reviewApi = {
+  accept: (id: number) => api(`/review/suggestions/${id}/accept`, { method: "POST" }),
+  reject: (id: number) => api(`/review/suggestions/${id}/reject`, { method: "POST" }),
+  link: (v: { group: number; order: number }) =>
+    api(`/review/groups/${v.group}/link`, { method: "POST", body: { order_id: v.order } }),
+  undo: (id: number) => api(`/review/groups/${id}/undo`, { method: "POST" }),
+  dismiss: (id: number) => api(`/review/groups/${id}/dismiss`, { method: "POST", body: {} }),
+  rerank: (ids: number[]) => api<{ asked?: number }>("/review/rerank", { method: "POST", body: { group_ids: ids } }),
+};
